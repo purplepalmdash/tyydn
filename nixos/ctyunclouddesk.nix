@@ -102,8 +102,11 @@ in
       "d /var/lib/CtyunClouddeskPublic 1777 root root -"
     ];
 
-    systemd.services = {
-      clouddesktop-daemon = mkIf cfg.enableDaemon {
+    # Per-user autostart entries (vendor postinst copies the .desktop file
+    # into ~/.config/autostart of every existing user).
+    systemd.services =
+    {
+      clouddesktop-daemon = lib.optionalAttrs cfg.enableDaemon {
         description = "天翼云电脑 client daemon";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
@@ -122,7 +125,7 @@ in
       };
 
       # Vendor unit name kept for drop-in compatibility.
-      ark-update-CtyunClouddeskPublic = mkIf cfg.enableUpdater {
+      ark-update-CtyunClouddeskPublic = lib.optionalAttrs cfg.enableUpdater {
         description = "天翼云电脑 self-update daemon (ark-update)";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
@@ -134,11 +137,7 @@ in
           KillMode = "process";
         };
       };
-    };
-
-    # Per-user autostart entries (vendor postinst copies the .desktop file
-    # into ~/.config/autostart of every existing user).
-    systemd.services = lib.mapAttrs' (lib.genAttrs cfg.autostartUsers) (user:
+    } // lib.mapAttrs' (lib.genAttrs cfg.autostartUsers) (user:
       nameValuePair "ctyunclouddesk-autostart-${user}" {
         description = "Install 天翼云电脑 autostart entry for user ${user}";
         after = [ "users.target" ];
@@ -150,11 +149,7 @@ in
           ExecStart = "${pkgs.bash}/bin/bash -c 'set -e; mkdir -p /home/${user}/.config/autostart; install -m 755 ${desktopFile} /home/${user}/.config/autostart/CtyunClouddeskPublic.desktop'";
         };
       }
-    );
-
-    # Per-user desktop shortcuts (vendor postinst also copies the .desktop
-    # file onto the desktop).
-    systemd.services = lib.mapAttrs' (lib.genAttrs cfg.desktopShortcutUsers) (user:
+    ) // lib.mapAttrs' (lib.genAttrs cfg.desktopShortcutUsers) (user:
       nameValuePair "ctyunclouddesk-desktop-shortcut-${user}" {
         description = "Install 天翼云电脑 desktop shortcut for user ${user}";
         after = [ "users.target" ];
