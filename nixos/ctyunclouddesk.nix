@@ -60,7 +60,7 @@ let
           [ -z "$dest" ] && [ -d "/home/${user}/Desktop" ] && dest="/home/${user}/Desktop"
           [ -n "$dest" ] || { echo "no desktop dir for ${user}, skipping"; exit 0; }
           install -m 755 ${desktopFile} "$dest/CtyunClouddeskPublic.desktop"
-          "${pkgs.gnome.gio}/bin/gio" set "$dest/CtyunClouddeskPublic.desktop" metadata::trusted true 2>/dev/null || true'
+          "${pkgs.glib.bin}/bin/gio" set "$dest/CtyunClouddeskPublic.desktop" metadata::trusted true 2>/dev/null || true'
         '';
       };
     };
