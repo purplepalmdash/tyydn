@@ -1,0 +1,12 @@
+# nix
+result
+result-*
+*.drv
+
+# test output
+tests/results/
+!tests/results/.gitkeep
+
+# editor noise
+.*.swp
+.DS_Store
