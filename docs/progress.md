@@ -125,6 +125,39 @@ GNOME Wayland 自动登录(用户 `test`)。
     截图 tests/results/xorg-xfce-desktop.png / xorg-ctyun-client.png
   - 厂商日志:checkOpenGLContext → llvmpipe → "ArkCore Use software renderType"
 
+## 全屏与快捷键排查(2026-10-27 05:1x–06:1x)
+
+用户反馈:客户端启动后全屏,几乎挡住所有键盘快捷键,问为什么。
+
+### 时间线
+
+1. `xprop`:客户端窗口 = `_NET_WM_STATE_FULLSCREEN` + `_MOTIF_WM_HINTS`
+   无边框 → 应用自己请求的全屏,不是 WM 加的。
+2. 厂商日志 `主窗口默认全屏: true initVisibility: 5`;QML 源码
+   (dist.rcc 内 `ArkAppService.qml`)硬编码 `defaultFullScreen = true`
+   (非 macOS)。开关 = `ArkStorageService.getItem("defaultFullScreenMode")
+   === false` 且 `ctgLockMode !== '1'`(非锁定模式)。
+3. 快捷键:按住 Alt+Tab 截图 → 切换器未出现(键盘没到 WM);
+   对照实验:聚焦终端时 Alt+Tab 同样无效 → **整个会话无 WM 快捷键**。
+   ltrace 客户端(登录界面):仅启动时一对 `xcb_grab_server`,无持久键盘 grab。
+4. 定位 Xfce 4.20 快捷键架构:libxfce4kbd-private 的 XfceShortcutsProvider
+   (xfce-shortcuts-provider.c):频道 `xfce4-keyboard-shortcuts`,
+   `/xfwm4/default/*`(来自 libxfce4ui 的 perchannel XML)首启时 clone 到
+   `/xfwm4/custom/*` 并置 `override=true`;xfwm4 只读 custom。
+   本机的 custom 为空(04:45 首次会话在 default 尚不可见时 clone,
+   写入了 override=true + 空 custom 的用户文件)→ xfwm4 零快捷键。
+5. 修复:
+   - `/etc/nixos/configuration.nix` 的 `XDG_CONFIG_DIRS` 增加
+     `pkgs.libxfce4ui`(提供 xfce4-keyboard-shortcuts.xml);
+   - 删除陈旧用户频道文件;
+   - 将 60 个 default 键绑定镜像写入 custom(xfconf-query --create);
+   - xfwm4 live 重抓(ltrace 见 824 次 XGrabKey)。
+6. 验证:Alt+Tab 切换 ✓、Alt+F4 关窗 ✓、Alt+F11 客户端退出全屏 →
+   800x600 窗口,稳定(截图 tests/results/xorg-ctyun-windowed.png)。
+   插曲:中途误判快捷键仍坏,实际是会话里只剩客户端一个窗口。
+7. 客户端本地存储(本地 SQLite,表 data/JSON 值)预置:
+   `defaultFullScreenMode=false`、`runMode='0'`。
+
 ## 后续(可选)
 
 - `nix build .#checks.x86_64-linux.ctyunclouddesk-vm`:VM 集成测试(较重)
@@ -146,3 +179,4 @@ GNOME Wayland 自动登录(用户 `test`)。
 | `docs/progress.md` | 本进度记录 |
 | `tests/results/xorg-xfce-desktop.png` | Xorg+Xfce 桌面截图(含天翼云电脑快捷方式) |
 | `tests/results/xorg-ctyun-client.png` | 客户端 X11 登录界面截图 |
+| `tests/results/xorg-ctyun-windowed.png` | 客户端窗口模式(Alt+F11 退出全屏后) |

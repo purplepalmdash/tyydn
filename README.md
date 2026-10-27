@@ -155,7 +155,8 @@ services.displayManager.defaultSession = "xfce";  # 自动登录进 Xfce(Xorg)
 environment.sessionVariables.XDG_CONFIG_DIRS =
   map (p: "${p}/etc/xdg") (with pkgs.xfce; [
     xfce4-session xfce4-settings xfce4-panel xfce4-notifyd thunar garcon
-  ]);
+  ] ++ [ pkgs.libxfce4ui ]);
+# libxfce4ui 提供 xfce4-keyboard-shortcuts.xml(WM 默认快捷键,见下节)
 
 # 模块没带的可选组件
 environment.systemPackages = with pkgs.xfce; [ xfce4-whiskermenu-plugin ];
@@ -189,3 +190,61 @@ environment.systemPackages = with pkgs.xfce; [ xfce4-whiskermenu-plugin ];
   软渲染后自动切到软件渲染(`ArkCore Use software renderType`),运行正常。
 - 单实例行为符合预期:第二个实例通过 IPC 通知首个实例后自行退出
   ("[ark] Another App is running, so I will exit")。
+
+## 客户端全屏与快捷键问题(2026-10-27 排查)
+
+现象:客户端启动后全屏,Alt+Tab / Alt+F4 / Alt+Space 等全局快捷键都"失效"。
+
+### 原因一:全屏是厂商的默认行为(客户端自己设置)
+
+- `xprop` 显示窗口带 `_NET_WM_STATE_FULLSCREEN` + `_MOTIF_WM_HINTS` 无边框
+  —— 是应用自己请求的全屏,不是窗口管理器加的。
+- QML 源码(打包在 `resource/dist.rcc`)`ArkAppService.qml` 里硬编码:
+  非 macOS 平台 `defaultFullScreen = true`(注释:"改成 macos 默认最大化,
+  其他的默认全屏")。厂商日志:`主窗口默认全屏: true initVisibility: 5`。
+- 代码里有开关:`ArkStorageService.getItem("defaultFullScreenMode") === false`
+  时才窗口化,且要求非锁定模式(`ctgLockMode !== '1'`)。
+  存储后端是本地 SQLite:
+  `~/.local/share/CtyunClouddeskPublic/QML/OfflineStorage/Databases/<hash>.sqlite`
+  (表 `data`,JSON 值)。已预置 `defaultFullScreenMode=false`、`runMode='0'`。
+
+### 原因二:快捷键其实整个会话都没配(不是被客户端"挡"了)
+
+排查结论(逐层验证):
+
+1. 按住 Alt+Tab 截图:窗口切换器根本没出现 → 键盘事件没到窗口管理器。
+2. **对照实验:聚焦终端窗口时 Alt+Tab 也无效** → 不是客户端抢键盘。
+   ltrace 客户端进程:登录界面阶段只有启动时一对 `xcb_grab_server`,
+   没有持久的 `xcb_grab_keyboard`/`XGrabKeyboard`。
+3. 真正原因:Xfce 4.20 的窗口管理器快捷键来自 xfconf 频道
+   `xfce4-keyboard-shortcuts` 的 `/xfwm4/custom/*`(由 libxfce4kbd-private 的
+   XfceShortcutsProvider 从 `/xfwm4/default/*` clone 而来,并置
+   `/xfwm4/custom/override=true`)。默认值来自 libxfce4ui 包的
+   `etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml`。
+   nixpkgs 不把它加进 `XDG_CONFIG_DIRS`,且首次会话(配置未生效时)的
+   clone 在 default 为空时执行,把 `override=true` + 空 custom 写进了用户目录
+   `~/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-keyboard-shortcuts.xml`
+   ——之后 default 可见了,但 provider 见 override=true 只读空的 custom,
+   xfwm4 一个快捷键都不抓。
+4. 修复:
+   - `XDG_CONFIG_DIRS` 加入 `pkgs.libxfce4ui` 的 `etc/xdg`(见上方配置);
+   - 删掉陈旧的用户频道文件;
+   - 把 `/xfwm4/default/*` 的 60 个默认键绑定镜像写入 `/xfwm4/custom/*`
+     (`xfconf-query -c xfce4-keyboard-shortcuts -p /xfwm4/custom/<组合> \
+      -s <值> -t string --create`),xfwm4 随即 live 重新 XGrabKey(824 次)。
+5. 注意:会话里**至少要有第二个窗口**,Alt+Tab 才有得切(曾误判为快捷键仍坏,
+   实际是当时只剩客户端一个窗口)。
+
+### 验证结果(Xorg/Xfce,客户端在前台)
+
+| 操作 | 结果 |
+| --- | --- |
+| Alt+Tab | 客户端 ↔ 终端窗口正常切换 ✓ |
+| Alt+F4 | 关闭活动窗口(实测关闭终端窗口)✓ |
+| Alt+F11 | 客户端退出全屏 → 800x600 窗口,面板/任务栏可见,状态稳定 ✓ |
+
+截图:`tests/results/xorg-ctyun-windowed.png`(窗口模式)。
+
+补充:连上云桌面会话后,客户端会主动 XGrabKeyboard 独占键盘(把组合键
+送给远端云电脑,标准远程桌面行为),本地快捷键此时被独占属设计如此;
+退出会话(回到登录界面)即释放(已用 ltrace 验证登录界面阶段无键盘 grab)。
