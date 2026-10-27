@@ -130,22 +130,22 @@ in
     };
 
     usbPermission = mkOption {
-      type = types.submodule ({ ... }: {
-        enable = mkOption {
-            type = types.bool;
-            default = true;
-            description = ''
-              Install the vendor udev rule that makes USB devices writable by
-              the "dialout" group (needed for USB device redirection).
-              This is what the vendor postinst writes to /etc/udev/rules.d.
-            '';
-          };
-        users = mkOption {
+      type = types.submodule {
+        options.enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Install the vendor udev rule that makes USB devices writable by
+            the "dialout" group (needed for USB device redirection).
+            This is what the vendor postinst writes to /etc/udev/rules.d.
+          '';
+        };
+        options.users = mkOption {
           type = types.listOf types.str;
           default = [ ];
           description = "User accounts to add to the dialout group.";
         };
-      });
+      };
       default = { enable = true; users = [ ]; };
       description = "USB redirection permission settings (vendor udev rule + dialout group).";
     };
