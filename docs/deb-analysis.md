@@ -59,3 +59,19 @@ vendor 自更新会向 `/opt/ctg` 写新版 payload;NixOS 上该目录在 store 
 更新只在当前运行中生效,`nixos-rebuild` 后回到包内版本。建议:
 更新渠道以"换 deb → `nix store add` → 改 `srcUrl/srcHash` → rebuild"为准,
 `enableUpdater` 可按需关闭。
+
+## 5. 运行时行为(2026-10-27 排查记录)
+
+- **默认全屏**:QML(`resource/dist.rcc` 内 `ArkAppService.qml`)非 macOS
+  硬编码 `defaultFullScreen = true`;窗口自设 `_NET_WM_STATE_FULLSCREEN`
+  + `_MOTIF_WM_HINTS` 无边框。开关:`ArkStorageService.getItem(
+  "defaultFullScreenMode") === false` 且 `ctgLockMode !== '1'`(非锁定模式)。
+- **本地设置存储**:SQLite
+  `~/.local/share/CtyunClouddeskPublic/QML/OfflineStorage/Databases/<hash>.sqlite`,
+  表 `data`(name TEXT, value TEXT,JSON 编码)。可用 sqlite3 预置键,
+  如 `defaultFullScreenMode` = `false`、`runMode` = `0`(常规模式)。
+- **键盘 grab**:登录界面阶段无持久 grab(ltrace 验证,仅启动时一对
+  `xcb_grab_server`);主二进制含 2 处 `XGrabKeyboard@plt` 调用点,
+  连上云桌面会话后独占本地键盘(把组合键送远端,远程桌面标准行为)。
+- **单实例**:第二实例经 IPC 通知首实例后自行退出
+  ("[ark] Another App is running, so I will exit.")。

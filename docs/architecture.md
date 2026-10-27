@@ -82,6 +82,9 @@ store 包 $out
   `$XDG_RUNTIME_DIR/.mutter-Xwaylandauth.*`)。
   本机已配 Xorg + Xfce 作为原生 X11 会话(`services.xserver.desktopManager.xfce`,
   另需把各 Xfce 包的 `etc/xdg` 加入 `XDG_CONFIG_DIRS`,详见 README “X11 环境”一节)。
+  其中 `pkgs.libxfce4ui` 的 `etc/xdg` 含 xfwm4 默认快捷键定义
+  (xfce4-keyboard-shortcuts.xml);缺它(且首会话的 clone 固化了空
+  custom+override)时整个会话无 WM 快捷键,详见 README “全屏与快捷键”一节。
 - store 只读:vendor 自更新写入 `/opt/ctg` 不会持久;以换 deb 升级为准。
 - 厂商私有云补丁(cloudcenterm 等)仅特定 ODM 镜像触发,public 版自动跳过。
 - 守护进程状态目录 `/var/lib/CtyunClouddeskPublic`(1777)+

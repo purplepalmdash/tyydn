@@ -157,6 +157,9 @@ GNOME Wayland 自动登录(用户 `test`)。
    插曲:中途误判快捷键仍坏,实际是会话里只剩客户端一个窗口。
 7. 客户端本地存储(本地 SQLite,表 data/JSON 值)预置:
    `defaultFullScreenMode=false`、`runMode='0'`。
+8. 文档:README 新增"客户端全屏与快捷键问题"节;deb-analysis.md 新增
+   "运行时行为"节;architecture.md 已知限制补充 libxfce4ui 快捷键说明;
+   另写 `docs/publishing.md`(GitHub 发布计划)。
 
 ## 后续(可选)
 
@@ -177,6 +180,7 @@ GNOME Wayland 自动登录(用户 `test`)。
 | `docs/deb-analysis.md` | 厂商 deb 分析 |
 | `docs/architecture.md` | 架构与踩坑说明 |
 | `docs/progress.md` | 本进度记录 |
+| `docs/publishing.md` | GitHub 发布计划(deb 来源/CI/发版流程/检查清单) |
 | `tests/results/xorg-xfce-desktop.png` | Xorg+Xfce 桌面截图(含天翼云电脑快捷方式) |
 | `tests/results/xorg-ctyun-client.png` | 客户端 X11 登录界面截图 |
 | `tests/results/xorg-ctyun-windowed.png` | 客户端窗口模式(Alt+F11 退出全屏后) |
