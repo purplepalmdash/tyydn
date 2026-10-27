@@ -18,6 +18,67 @@ with lib;
 let
   cfg = config.services.ctyunclouddesk;
   desktopFile = "${cfg.package}/usr/share/applications/CtyunClouddeskPublic.desktop";
+
+  # Per-user oneshot services that install the autostart entry, mirroring the
+  # vendor postinst behaviour of copying the .desktop file into
+  # ~/.config/autostart of every existing user.
+  autostartServices = listToAttrs (map (user: {
+    name = "ctyunclouddesk-autostart-${user}";
+    value = {
+      description = "Install 天翼云电脑 autostart entry for user ${user}";
+      after = [ "users.target" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        User = user;
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.bash}/bin/bash -c " + ''
+          set -e
+          mkdir -p "/home/${user}/.config/autostart"
+          install -m 755 ${desktopFile} "/home/${user}/.config/autostart/CtyunClouddeskPublic.desktop"'
+        '';
+      };
+    };
+  }) cfg.autostartUsers);
+
+  # Per-user desktop shortcuts (vendor postinst also copies the .desktop
+  # file onto the desktop).
+  desktopShortcutServices = listToAttrs (map (user: {
+    name = "ctyunclouddesk-desktop-shortcut-${user}";
+    value = {
+      description = "Install 天翼云电脑 desktop shortcut for user ${user}";
+      after = [ "users.target" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        User = user;
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.bash}/bin/bash -c " + ''
+          set -e
+          dest=""
+          [ -d "/home/${user}/桌面" ] && dest="/home/${user}/桌面"
+          [ -z "$dest" ] && [ -d "/home/${user}/Desktop" ] && dest="/home/${user}/Desktop"
+          [ -n "$dest" ] || { echo "no desktop dir for ${user}, skipping"; exit 0; }
+          install -m 755 ${desktopFile} "$dest/CtyunClouddeskPublic.desktop"
+          "${pkgs.gnome.gio}/bin/gio" set "$dest/CtyunClouddeskPublic.desktop" metadata::trusted true 2>/dev/null || true'
+        '';
+      };
+    };
+  }) cfg.desktopShortcutUsers);
+
+  # USB redirection: add the listed users to the dialout group.
+  usbUsers = listToAttrs (map (user: {
+    name = user;
+    value = {
+      extraGroups = mkMerge [ [ "dialout" ] ];
+    };
+  }) cfg.usbPermission.users);
+
+  # All per-user / per-group option lists must reference real users.
+  existingUsers = config.users.users;
+  assertUsers = users:
+    users
+    == (filter (u: existingUsers ? ${u}) users);
 in
 {
   options.services.ctyunclouddesk = {
@@ -102,11 +163,8 @@ in
       "d /var/lib/CtyunClouddeskPublic 1777 root root -"
     ];
 
-    # Per-user autostart entries (vendor postinst copies the .desktop file
-    # into ~/.config/autostart of every existing user).
-    systemd.services =
-    {
-      clouddesktop-daemon = lib.optionalAttrs cfg.enableDaemon {
+    systemd.services = {
+      clouddesktop-daemon = optionalAttrs cfg.enableDaemon {
         description = "天翼云电脑 client daemon";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
@@ -125,7 +183,7 @@ in
       };
 
       # Vendor unit name kept for drop-in compatibility.
-      ark-update-CtyunClouddeskPublic = lib.optionalAttrs cfg.enableUpdater {
+      ark-update-CtyunClouddeskPublic = optionalAttrs cfg.enableUpdater {
         description = "天翼云电脑 self-update daemon (ark-update)";
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
@@ -137,57 +195,31 @@ in
           KillMode = "process";
         };
       };
-    } // (lib.mapAttrs' (lib.genAttrs cfg.autostartUsers) (user: _: nameValuePair "ctyunclouddesk-autostart-${user}" {
-        description = "Install 天翼云电脑 autostart entry for user ${user}";
-        after = [ "users.target" ];
-        wantedBy = [ "multi-user.target" ];
-        serviceConfig = {
-          Type = "oneshot";
-          User = user;
-          RemainAfterExit = true;
-          ExecStart = "${pkgs.bash}/bin/bash -c 'set -e; mkdir -p /home/${user}/.config/autostart; install -m 755 ${desktopFile} /home/${user}/.config/autostart/CtyunClouddeskPublic.desktop'";
-        };
-      })) // (lib.mapAttrs' (lib.genAttrs cfg.desktopShortcutUsers) (user: _: nameValuePair "ctyunclouddesk-desktop-shortcut-${user}" {
-        description = "Install 天翼云电脑 desktop shortcut for user ${user}";
-        after = [ "users.target" ];
-        wantedBy = [ "multi-user.target" ];
-        serviceConfig = {
-          Type = "oneshot";
-          User = user;
-          RemainAfterExit = true;
-          ExecStart = "${pkgs.bash}/bin/bash -c " + ''
-            set -e
-            dest=""
-            [ -d "/home/${user}/桌面" ] && dest="/home/${user}/桌面"
-            [ -z "$dest" ] && [ -d "/home/${user}/Desktop" ] && dest="/home/${user}/Desktop"
-            [ -n "$dest" ] || { echo "no desktop dir for ${user}, skipping"; exit 0; }
-            install -m 755 ${desktopFile} "$dest/CtyunClouddeskPublic.desktop"
-            "${pkgs.gnome.gio}/bin/gio" set "$dest/CtyunClouddeskPublic.desktop" metadata::trusted true 2>/dev/null || true
-          '';
-        };
-      }));
+    } // autostartServices // desktopShortcutServices;
 
     # Vendor USB permission rule (postinst set_usb_permission):
     #   SUBSYSTEM=="usb", MODE="0666", GROUP="dialout"
     # (option moved from hardware.udev to services.udev in nixpkgs >= 26.05)
-    services.udev.extraRules = lib.optionals cfg.usbPermission.enable [
+    services.udev.extraRules = optionals cfg.usbPermission.enable [
       ''
         SUBSYSTEM=="usb", MODE="0666", GROUP="dialout"
       ''
     ];
 
-    users.users = (lib.mapAttrs' (lib.genAttrs cfg.usbPermission.users) (user: _: nameValuePair user {
-        extraGroups = mkMerge [ [ "dialout" ] ];
-      }));
+    users.users = usbUsers;
 
     assertions = [
       {
-        assertion = builtins.length (lib.intersectAttrs (lib.listToAttrs (lib.map (u: { name = u; value = true; }) cfg.autostartUsers)) config.users.users) == builtins.length cfg.autostartUsers;
-        message = "services.ctyunclouddesk.autostartUsers: all users must exist in users.users (${lib.concatStringsSep ", " cfg.autostartUsers})";
+        assertion = assertUsers cfg.autostartUsers;
+        message = "services.ctyunclouddesk.autostartUsers: all users must exist in users.users (${concatStringsSep ", " cfg.autostartUsers})";
       }
       {
-        assertion = builtins.length (lib.intersectAttrs (lib.listToAttrs (lib.map (u: { name = u; value = true; }) cfg.desktopShortcutUsers)) config.users.users) == builtins.length cfg.desktopShortcutUsers;
-        message = "services.ctyunclouddesk.desktopShortcutUsers: all users must exist in users.users (${lib.concatStringsSep ", " cfg.desktopShortcutUsers})";
+        assertion = assertUsers cfg.desktopShortcutUsers;
+        message = "services.ctyunclouddesk.desktopShortcutUsers: all users must exist in users.users (${concatStringsSep ", " cfg.desktopShortcutUsers})";
+      }
+      {
+        assertion = assertUsers cfg.usbPermission.users;
+        message = "services.ctyunclouddesk.usbPermission.users: all users must exist in users.users (${concatStringsSep ", " cfg.usbPermission.users})";
       }
     ];
   };
