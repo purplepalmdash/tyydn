@@ -31,7 +31,11 @@
             networking.hostName = "ctyun-test";
             networking.networkmanager.enable = true;
             imports = [ ./nixos/ctyunclouddesk.nix ];
-            services.ctyunclouddesk.enable = true;
+            services.ctyunclouddesk = {
+              enable = true;
+              # 原生 X11 桌面(Xorg + Xfce)+ WM 快捷键(见 docs/guide.md 第 7 步):
+              # xfceSession.enable = true;
+            };
           }
         ];
       };

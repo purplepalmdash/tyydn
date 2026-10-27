@@ -161,6 +161,31 @@ GNOME Wayland 自动登录(用户 `test`)。
    "运行时行为"节;architecture.md 已知限制补充 libxfce4ui 快捷键说明;
    另写 `docs/publishing.md`(GitHub 发布计划)。
 
+### 2026-10-27 08:0x — Xfce 快捷键修复收进模块选项(`xfceSession`)
+
+用户要求"开启快捷键切换的版本"。把手写的 Xorg/Xfce 系统配置收进模块,
+新增 `services.ctyunclouddesk.xfceSession`:
+
+1. `enable` → Xorg(`videoDrivers`,默认 modesetting)+ 官方
+   `desktopManager.xfce` + `displayManager.defaultSession = mkDefault "xfce"`
+   + `XDG_CONFIG_DIRS`(xfce4-session/settings/panel/notifyd/thunar/garcon
+   的 etc/xdg **+ libxfce4ui**——failsafe 会话 + WM 默认快捷键两个坑一并解决)。
+2. `repairUsers` → 每用户 oneshot 装 autostart 条目,跑幂等修复脚本
+   (`writeShellScriptBin`):`DESKTOP_SESSION != xfce` 直接退出;custom 已有
+   键位(除 override 标记外)则退出;否则把可见的 `/xfwm4/default/*` 逐个
+   镜像进 `/xfwm4/custom/*`(xfwm4 live 重抓)。
+3. 现场 `/etc/nixos/configuration.nix` 改用模块选项(手写块删除);
+   `nixos-rebuild switch` 后:会话正常、Alt+Tab/Alt+F4 验证通过。
+4. **验证修复脚本全链路**:清空 60 个 custom 键 + 保留 override=true(复现
+   04:45 卡死态)→ Alt+Tab 失效 → 跑脚本 → 60 键镜像 → Alt+Tab 恢复。
+   过程中发现并修掉一个 bug:fast-path 计数把 `override` 标记键当成了
+   键位(custom 只剩 override 时恰好就是卡死态,会误判为"已修好")。
+5. 模块写法踩坑:内层 `config = mkIf ...` 块在本 nixpkgs 不被扁平化
+   (`The option 'config' does not exist`)→ 把 mkIf 直接挂在选项上;
+   shell 脚本里 `${VAR:-}` 在 Nix 缩进字符串里要写 `''${}`。
+6. 文档:README(配置节重写 + 选项表 + 本机配置)、guide(第 2/7 步、Q5、选项表)、
+   architecture(模块选项节)。
+
 ## 后续(可选)
 
 - `nix build .#checks.x86_64-linux.ctyunclouddesk-vm`:VM 集成测试(较重)
@@ -172,15 +197,16 @@ GNOME Wayland 自动登录(用户 `test`)。
 | 文件 | 内容 |
 | --- | --- |
 | `pkgs/ctyunclouddesk/default.nix` | 包定义(解包/patchelf/wrapper/自检) |
-| `nixos/ctyunclouddesk.nix` | `services.ctyunclouddesk.*` 模块 |
+| `nixos/ctyunclouddesk.nix` | `services.ctyunclouddesk.*` 模块(含 xfceSession:Xorg+Xfce+快捷键修复) |
 | `flake.nix` / `shell.nix` | flake 包/模块/示例系统/devShell;非 flake shell |
 | `tests/test-local.sh` | 本机冒烟测试(全绿,日志在 tests/results/) |
 | `tests/nixos-vm.nix` | NixOS VM 测试(可选跑) |
-| `README.md` | 使用/配置/技术要点/Xorg+Xfce 环境 |
+| `README.md` | 使用/配置/技术要点/Xorg+Xfce 环境(含 xfceSession 模块选项) |
 | `docs/deb-analysis.md` | 厂商 deb 分析 |
 | `docs/architecture.md` | 架构与踩坑说明 |
 | `docs/progress.md` | 本进度记录 |
 | `docs/publishing.md` | GitHub 发布计划(deb 来源/CI/发版流程/检查清单) |
+| `docs/guide.md` | 小白版安装使用指南(flake/非 flake,常见操作与 FAQ) |
 | `tests/results/xorg-xfce-desktop.png` | Xorg+Xfce 桌面截图(含天翼云电脑快捷方式) |
 | `tests/results/xorg-ctyun-client.png` | 客户端 X11 登录界面截图 |
 | `tests/results/xorg-ctyun-windowed.png` | 客户端窗口模式(Alt+F11 退出全屏后) |

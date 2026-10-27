@@ -85,6 +85,10 @@ systemctl status ark-update-CtyunClouddeskPublic
 | `desktopShortcutUsers` | `[]` | 在桌面(`~/Desktop` 或 `~/桌面`)放快捷方式的用户 |
 | `usbPermission.enable` | `true` | 厂商 USB 重定向 udev 规则 |
 | `usbPermission.users` | `[]` | 加入 `dialout` 组的用户 |
+| `xfceSession.enable` | `false` | **"开启快捷键切换的版本"**:Xorg + 官方 Xfce 会话 + XDG_CONFIG_DIRS 补丁(failsafe 会话 + WM 默认快捷键) |
+| `xfceSession.videoDrivers` | `["modesetting"]` | Xorg 显卡驱动(按硬件改) |
+| `xfceSession.defaultSession` | `true` | 设 `displayManager.defaultSession="xfce"`(mkDefault,用户显式值优先) |
+| `xfceSession.repairUsers` | `[]` | 给哪些用户装 xfwm4 快捷键修复 autostart(首会话固化空频道的老用户需要) |
 
 本机当前配置:
 
@@ -96,6 +100,11 @@ services.ctyunclouddesk = {
   autostartUsers = [ "test" ];
   desktopShortcutUsers = [ "test" ];
   usbPermission = { enable = true; users = [ "test" ]; };
+  xfceSession = {                     # Xorg + Xfce + WM 快捷键(修复已装)
+    enable = true;
+    videoDrivers = [ "modesetting" ]; # QEMU virtio GPU
+    repairUsers = [ "test" ];
+  };
 };
 ```
 
@@ -133,35 +142,51 @@ services.ctyunclouddesk = {
 
 ### 配置(在 `/etc/nixos/configuration.nix`)
 
+2026-10-27 起,Xorg+Xfce+快捷键修复已收进本仓库的模块选项
+**`services.ctyunclouddesk.xfceSession`**——"开启快捷键切换的版本"
+就是打开这一个开关:
+
 ```nix
-# 官方 Xfce 模块:26.05 里位于 nixos/modules/services/x11/desktop-managers/xfce.nix
-# (wiki.nixos.org/wiki/Xfce 的旧路径 services.xserver.desktopManager.xfce 仍然有效)。
-# 自动:注册 xfce 会话、装齐 Xfce 组件、启用 programs.xfconf(xfconfd D-Bus 服务)、
-# dconf、xdg-desktop-portal 等。
+services.ctyunclouddesk.xfceSession = {
+  enable = true;                  # Xorg + 官方 Xfce 模块 + 默认会话 xfce
+  videoDrivers = [ "modesetting" ];  # QEMU virtio GPU 用 modesetting
+  repairUsers = [ "test" ];        # 修复首会话固化的空快捷键频道(老用户需要)
+};
+```
+
+它等价于(历史上是手写在系统配置里的):
+
+```nix
 services.xserver = {
   enable = true;
   videoDrivers = [ "modesetting" ];   # QEMU virtio GPU 用 modesetting
-  desktopManager.xfce.enable = true;
+  desktopManager.xfce.enable = true;  # 官方 Xfce 模块(26.05 里位于
+  # nixos/modules/services/x11/desktop-managers/xfce.nix;自动注册会话、
+  # 装齐组件、启用 programs.xfconf/dconf/xdg-desktop-portal 等)
 };
 services.displayManager.defaultSession = "xfce";  # 自动登录进 Xfce(Xorg)
 
 # 关键补丁:nixpkgs 的 xfce 模块没有把各包的 etc/xdg 加进 XDG_CONFIG_DIRS,
-# 但 Xfce 4.20 的会话定义(failsafe 会话 = 首登默认桌面)存在
-# $PKG/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/*.xml,
+# 但 Xfce 4.20 的会话定义(failsafe 会话 = 首登默认桌面)与 WM 默认快捷键
+# 定义(libxfce4ui)存在 $PKG/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/*.xml,
 # libxfce4util 的 xfce_resource_lookup_all() 按 XDG_CONFIG_DIRS + /etc/xdg 搜索。
-# 不手动加的话,xfconfd 找不到 channel 文件,xfce4-session 首启读不到
-# /general/FailsafeSessionName,弹 "Unable to load a failsafe session"
-# (中文:未能载入安全会话)且无窗口管理器。
-# 注意:路径要精确到 etc/xdg(不是 etc)。
-environment.sessionVariables.XDG_CONFIG_DIRS =
-  map (p: "${p}/etc/xdg") (with pkgs.xfce; [
-    xfce4-session xfce4-settings xfce4-panel xfce4-notifyd thunar garcon
-  ] ++ [ pkgs.libxfce4ui ]);
-# libxfce4ui 提供 xfce4-keyboard-shortcuts.xml(WM 默认快捷键,见下节)
-
-# 模块没带的可选组件
-environment.systemPackages = with pkgs.xfce; [ xfce4-whiskermenu-plugin ];
+# 缺 xfce4-session.xml → 首启 "Unable to load a failsafe session"(未能载入安全会话);
+# 缺 libxfce4ui 的 xfce4-keyboard-shortcuts.xml → 首会话的快捷键 clone 为空,
+# 整个会话无 Alt+Tab/Alt+F4/Alt+F11(见下节)。
+# 路径要精确到 etc/xdg(不是 etc);列表形式下系统会再拼上标准 profile 后缀,
+# 不会顶掉用户自己的定义。
 ```
+
+`repairUsers` 的细节:如果某用户的首次 Xfce 会话发生在快捷键定义尚不可见时,
+xfconf 频道会被固化为 `override=true` + 空 `/xfwm4/custom/*`,且 provider
+之后不再重新 clone——整个会话零 WM 快捷键。模块给这些用户装一个
+autostart 条目,会话启动时跑一个幂等的小脚本把 `/xfwm4/default/*` 镜像进
+`/xfwm4/custom/*`(xfwm4 live 重抓键位)。新用户不需要(首会话即可见)。
+本机的 test 用户就是这样固化的,已现场验证:清空 60 个 custom 键复现
+卡死态(Alt+Tab 失效)→ 跑修复脚本 → 60 键镜像回去 → Alt+Tab 恢复。
+
+模块没带的可选组件(如开始菜单插件)仍由系统配置自己加:
+`environment.systemPackages = with pkgs.xfce; [ xfce4-whiskermenu-plugin ];`
 
 排查过程与依据(上游源码:libxfce4util `xfce-resource.c`、xfce4-session
 `xfsm-manager.c`、xfconf `xfconf-backend-perchannel-xml.c`)见 `docs/progress.md`

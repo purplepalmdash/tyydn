@@ -8,6 +8,10 @@
 #   2. the shared state directory /var/lib/CtyunClouddeskPublic exists (1777)
 #   3. the wrapped GUI client starts under xvfb and stays alive (no missing
 #      shared libraries / no immediate crash), for >= 15 s out of a 25 s budget
+#
+# Uses the nixpkgs 26.05 test API: `nodes` is an attrset and the test script
+# is plain Python with the node objects in scope (start_all() instead of the
+# removed start_dashboard()).
 { pkgs, lib ? pkgs.lib }:
 
 let
@@ -18,21 +22,21 @@ in
 pkgs.testers.nixosTest {
   name = "ctyunclouddesk";
 
-  nodes = [ "machine" ];
-
-  # The VM needs a console + a minimal X stack for the xvfb GUI smoke test.
-  machine = { ... }: {
-    boot.console = "tty1";
-    imports = [ ../nixos/ctyunclouddesk.nix ];
-    services.ctyunclouddesk = {
-      enable = true;
-      package = ctyun;
+  nodes = {
+    # The VM needs a console + a minimal X stack for the xvfb GUI smoke test.
+    machine = { ... }: {
+      boot.console = "tty1";
+      imports = [ ../nixos/ctyunclouddesk.nix ];
+      services.ctyunclouddesk = {
+        enable = true;
+        package = ctyun;
+      };
+      environment.systemPackages = with pkgs; [ xvfb bash ];
     };
-    environment.systemPackages = with pkgs; [ xvfb bash ];
   };
 
   testScript = ''
-    machine = start_dashboard()
+    start_all()
     machine.wait_for_unit("multi-user.target")
 
     machine.wait_for_unit("clouddesktop-daemon")

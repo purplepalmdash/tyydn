@@ -80,6 +80,88 @@ let
     };
   }) cfg.usbPermission.users);
 
+  # Xfce WM keyboard-shortcut repair (autostart entry).
+  #
+  # Xfce 4.20 WM shortcuts come from the xfconf channel
+  # "xfce4-keyboard-shortcuts": /xfwm4/default/* (defined by the
+  # libxfce4ui package's perchannel XML) is cloned into /xfwm4/custom/*
+  # on the FIRST session, with /xfwm4/custom/override=true set. If that
+  # first session ran before the default definitions were visible in
+  # XDG_CONFIG_DIRS, the clone is empty and xfwm4 has NO shortcuts at
+  # all (Alt+Tab/Alt+F4/Alt+F11 dead), and the provider never re-clones
+  # (override=true). This script mirrors /xfwm4/default/* into
+  # /xfwm4/custom/* once; xfwm4 re-grabs the keys live.
+  xfceShortcutRepair = pkgs.writeShellScriptBin "ctyunclouddesk-xfce-shortcuts-repair" ''
+    set -u
+    # Only inside a graphical Xfce session (the channel is Xfce-specific).
+    [ "''${DESKTOP_SESSION:-}" = "xfce" ] || exit 0
+    XQ=${pkgs.xfconf}/bin/xfconf-query
+    if [ -z "''${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+      DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+      export DBUS_SESSION_BUS_ADDRESS
+    fi
+    # Fast path: custom bindings already populated (the 'override' marker
+    # does not count as a binding).
+    n=$("$XQ" -c xfce4-keyboard-shortcuts -p /xfwm4/custom -l 2>/dev/null \
+          | grep -E '^/xfwm4/custom/[^/]+$' \
+          | grep -cv '^/xfwm4/custom/override$' || true)
+    [ "''${n:-0}" -gt 0 ] && exit 0
+    # Nothing to mirror if the defaults are not visible either.
+    defaults=$("$XQ" -c xfce4-keyboard-shortcuts -p /xfwm4/default -l 2>/dev/null \
+          | grep -E '^/xfwm4/default/[^/]+$' || true)
+    [ -n "$defaults" ] || exit 0
+    while read -r p; do
+      [ -n "$p" ] || continue
+      name=''${p#/xfwm4/default/}
+      v=$("$XQ" -c xfce4-keyboard-shortcuts -p "$p")
+      if [ -n "$v" ]; then
+        "$XQ" -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/$name" -s "$v" -t string --create || true
+      fi
+    done <<DEFAULTS
+    $defaults
+    DEFAULTS
+  '';
+
+  # Per-user oneshot services that install the repair autostart entry.
+  xfceShortcutRepairServices = listToAttrs (map (user: {
+    name = "ctyunclouddesk-xfce-shortcuts-${user}";
+    value = {
+      description = "Install Xfce WM shortcut repair autostart entry for user ${user}";
+      after = [ "users.target" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        User = user;
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.writeShellScriptBin "ctyunclouddesk-xfce-shortcuts-${user}" ''
+          set -e
+          mkdir -p "/home/${user}/.config/autostart"
+          cat > "/home/${user}/.config/autostart/ctyunclouddesk-xfce-shortcuts-fix.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=CTyun Xfce WM shortcut repair
+Exec=${xfceShortcutRepair}/bin/ctyunclouddesk-xfce-shortcuts-repair
+X-GNOME-Autostart-Phase=Initialization
+EOF
+        ''}/bin/ctyunclouddesk-xfce-shortcuts-${user}";
+      };
+    };
+  }) cfg.xfceSession.repairUsers);
+
+  # Xfce perchannel XML definitions that nixpkgs does not add to
+  # XDG_CONFIG_DIRS itself (libxfce4util's resource lookup searches
+  # XDG_CONFIG_DIRS + /etc/xdg for <dir>/xfce4/xfconf/...):
+  #   xfce4-session: xfce4-session.xml = failsafe session definition;
+  #                  missing -> "Unable to load a failsafe session"
+  #   libxfce4ui:    xfce4-keyboard-shortcuts.xml = xfwm4 default WM
+  #                  shortcuts; missing/stale -> no Alt+Tab/Alt+F4/Alt+F11
+  # The list form of environment.sessionVariables is merged with the
+  # system's standard XDG suffixes (see nixos/modules/config/
+  # system-environment.nix), so user definitions are not clobbered.
+  xfceConfigDirs = map (p: "${p}/etc/xdg") ((with pkgs.xfce; [
+    xfce4-session xfce4-settings xfce4-panel xfce4-notifyd thunar garcon
+  ]) ++ [ pkgs.libxfce4ui ]);
+
   # All per-user / per-group option lists must reference real users.
   existingUsers = config.users.users;
   assertUsers = users:
@@ -155,6 +237,61 @@ in
       default = { enable = true; users = [ ]; };
       description = "USB redirection permission settings (vendor udev rule + dialout group).";
     };
+
+    xfceSession = mkOption {
+      type = types.submodule {
+        options.enable = mkEnableOption ''
+          an Xorg + Xfce desktop session with working window-manager keyboard
+          shortcuts (Alt+Tab, Alt+F4, Alt+F11, ...). The client is a pure
+          X11/xcb application; this is the native-X11 desktop setup it was
+          validated on. GNOME/Wayland sessions keep working via XWayland.
+        '';
+        options.videoDrivers = mkOption {
+          type = types.listOf types.str;
+          default = [ "modesetting" ];
+          description = ''
+            Xorg video driver(s). "modesetting" works with the QEMU/virtio
+            GPU (and most KVM virtio-gpu and many bare-metal GPUs); use
+            "intel"/"nvidia"/"amdgpu" for dedicated hardware.
+          '';
+        };
+        options.defaultSession = mkOption {
+          type = types.bool;
+          default = true;
+          description = ''
+            Set services.displayManager.defaultSession = "xfce" (marked as
+            mkDefault, so an explicit user value wins). Autologin then goes
+            to Xfce/Xorg; all other sessions stay selectable in the GDM
+            session chooser.
+          '';
+        };
+        options.repairUsers = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = ''
+            User accounts whose Xfce session may already have a stale or
+            empty xfwm4 keybinding channel (empty /xfwm4/custom plus
+            override=true, frozen by the shortcut provider's first run
+            before the default definitions were visible). For each user an
+            autostart entry runs a small repair script that mirrors
+            /xfwm4/default/* into /xfwm4/custom/* once. Fresh users (no
+            previous Xfce session) don't need this.
+          '';
+        };
+      };
+      default = {
+        enable = false;
+        videoDrivers = [ "modesetting" ];
+        defaultSession = true;
+        repairUsers = [ ];
+      };
+      description = ''
+        Xorg + Xfce session for the pure-X11 client, including the
+        XDG_CONFIG_DIRS entries that carry Xfce's perchannel definitions
+        (failsafe session + default WM shortcuts) and an optional
+        per-user repair for stale xfwm4 keybinding channels.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -200,7 +337,7 @@ in
           KillMode = "process";
         };
       };
-    } // autostartServices // desktopShortcutServices;
+    } // autostartServices // desktopShortcutServices // xfceShortcutRepairServices;
 
     # Vendor USB permission rule (postinst set_usb_permission):
     #   SUBSYSTEM=="usb", MODE="0666", GROUP="dialout"
@@ -210,6 +347,18 @@ in
     '';
 
     users.users = usbUsers;
+
+    # Xorg + Xfce session with working WM shortcuts (see xfceSession).
+    services.xserver = mkIf cfg.xfceSession.enable {
+      enable = true;
+      videoDrivers = cfg.xfceSession.videoDrivers;
+      desktopManager.xfce.enable = true;
+    };
+    services.displayManager.defaultSession = mkIf cfg.xfceSession.enable (
+      mkDefault (optionalString cfg.xfceSession.defaultSession "xfce")
+    );
+    environment.sessionVariables.XDG_CONFIG_DIRS =
+      mkIf cfg.xfceSession.enable xfceConfigDirs;
 
     assertions = [
       {
@@ -223,6 +372,10 @@ in
       {
         assertion = assertUsers cfg.usbPermission.users;
         message = "services.ctyunclouddesk.usbPermission.users: all users must exist in users.users (${concatStringsSep ", " cfg.usbPermission.users})";
+      }
+      {
+        assertion = assertUsers cfg.xfceSession.repairUsers;
+        message = "services.ctyunclouddesk.xfceSession.repairUsers: all users must exist in users.users (${concatStringsSep ", " cfg.xfceSession.repairUsers})";
       }
     ];
   };
