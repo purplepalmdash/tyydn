@@ -137,8 +137,7 @@ in
           KillMode = "process";
         };
       };
-    } // lib.mapAttrs' (lib.genAttrs cfg.autostartUsers) (user:
-      nameValuePair "ctyunclouddesk-autostart-${user}" {
+    } // lib.mapAttrs' (lib.genAttrs cfg.autostartUsers) (user: _: nameValuePair "ctyunclouddesk-autostart-${user}" {
         description = "Install 天翼云电脑 autostart entry for user ${user}";
         after = [ "users.target" ];
         wantedBy = [ "multi-user.target" ];
@@ -149,8 +148,7 @@ in
           ExecStart = "${pkgs.bash}/bin/bash -c 'set -e; mkdir -p /home/${user}/.config/autostart; install -m 755 ${desktopFile} /home/${user}/.config/autostart/CtyunClouddeskPublic.desktop'";
         };
       }
-    ) // lib.mapAttrs' (lib.genAttrs cfg.desktopShortcutUsers) (user:
-      nameValuePair "ctyunclouddesk-desktop-shortcut-${user}" {
+    ) // lib.mapAttrs' (lib.genAttrs cfg.desktopShortcutUsers) (user: _: nameValuePair "ctyunclouddesk-desktop-shortcut-${user}" {
         description = "Install 天翼云电脑 desktop shortcut for user ${user}";
         after = [ "users.target" ];
         wantedBy = [ "multi-user.target" ];
@@ -180,8 +178,7 @@ in
       ''
     ];
 
-    users.users = lib.mapAttrs' (lib.genAttrs cfg.usbPermission.users) (user:
-      nameValuePair user {
+    users.users = lib.mapAttrs' (lib.genAttrs cfg.usbPermission.users) (user: _: nameValuePair user {
         extraGroups = mkMerge [ [ "dialout" ] ];
       }
     );
