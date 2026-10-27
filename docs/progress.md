@@ -4,7 +4,9 @@
 `nixos-rebuild` 方式落地并可用。环境:NixOS 26.05 (Yarara)、Nix 2.34.9、
 GNOME Wayland 自动登录(用户 `test`)。
 
-## 状态:✅ 完成(2026-10-27)
+## 状态:✅ 完成并交付(2026-10-27)
+
+交付提交:`d594220`(pkgs/模块/测试修复 + README + docs 全套)。
 
 - [x] deb 分析(docs/deb-analysis.md)
 - [x] 包定义 pkgs/ctyunclouddesk/default.nix(build 全绿)
@@ -78,3 +80,17 @@ GNOME Wayland 自动登录(用户 `test`)。
 - `nix build .#checks.x86_64-linux.ctyunclouddesk-vm`:VM 集成测试(较重)
 - 升级流程:新 deb → `nix store add` → 更新 `srcUrl/srcHash` → rebuild
 - 如厂商出 Wayland 构建,可去掉 X11 相关绕行(XAUTHORITY 探测等)
+
+## 交付物清单
+
+| 文件 | 内容 |
+| --- | --- |
+| `pkgs/ctyunclouddesk/default.nix` | 包定义(解包/patchelf/wrapper/自检) |
+| `nixos/ctyunclouddesk.nix` | `services.ctyunclouddesk.*` 模块 |
+| `flake.nix` / `shell.nix` | flake 包/模块/示例系统/devShell;非 flake shell |
+| `tests/test-local.sh` | 本机冒烟测试(全绿,日志在 tests/results/) |
+| `tests/nixos-vm.nix` | NixOS VM 测试(可选跑) |
+| `README.md` | 使用/配置/技术要点 |
+| `docs/deb-analysis.md` | 厂商 deb 分析 |
+| `docs/architecture.md` | 架构与踩坑说明 |
+| `docs/progress.md` | 本进度记录 |
