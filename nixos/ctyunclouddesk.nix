@@ -17,11 +17,17 @@ with lib;
 
 let
   cfg = config.services.ctyunclouddesk;
-  desktopFile = "${cfg.package}/usr/share/applications/CtyunClouddeskPublic.desktop";
+  desktopFile = "${cfg.package}/share/applications/CtyunClouddeskPublic.desktop";
 
   # Per-user oneshot services that install the autostart entry, mirroring the
   # vendor postinst behaviour of copying the .desktop file into
   # ~/.config/autostart of every existing user.
+  #
+  # The installer is a real script (writeShellScriptBin), not an inline
+  # multi-line `bash -c`: systemd's ExecStart is a single line, and NixOS
+  # would emit the raw newlines, which systemd parses as extra directives
+  # (a line starting with '[' is even taken for a section header, yielding
+  # "Unit failed to load properly: Bad message").
   autostartServices = listToAttrs (map (user: {
     name = "ctyunclouddesk-autostart-${user}";
     value = {
@@ -32,11 +38,11 @@ let
         Type = "oneshot";
         User = user;
         RemainAfterExit = true;
-        ExecStart = "${pkgs.bash}/bin/bash -c " + ''
+        ExecStart = "${pkgs.writeShellScriptBin "ctyunclouddesk-autostart-${user}" ''
           set -e
           mkdir -p "/home/${user}/.config/autostart"
-          install -m 755 ${desktopFile} "/home/${user}/.config/autostart/CtyunClouddeskPublic.desktop"'
-        '';
+          install -m 755 ${desktopFile} "/home/${user}/.config/autostart/CtyunClouddeskPublic.desktop"
+        ''}/bin/ctyunclouddesk-autostart-${user}";
       };
     };
   }) cfg.autostartUsers);
@@ -53,15 +59,15 @@ let
         Type = "oneshot";
         User = user;
         RemainAfterExit = true;
-        ExecStart = "${pkgs.bash}/bin/bash -c " + ''
+        ExecStart = "${pkgs.writeShellScriptBin "ctyunclouddesk-desktop-shortcut-${user}" ''
           set -e
           dest=""
           [ -d "/home/${user}/桌面" ] && dest="/home/${user}/桌面"
           [ -z "$dest" ] && [ -d "/home/${user}/Desktop" ] && dest="/home/${user}/Desktop"
           [ -n "$dest" ] || { echo "no desktop dir for ${user}, skipping"; exit 0; }
           install -m 755 ${desktopFile} "$dest/CtyunClouddeskPublic.desktop"
-          "${pkgs.glib.bin}/bin/gio" set "$dest/CtyunClouddeskPublic.desktop" metadata::trusted true 2>/dev/null || true'
-        '';
+          "${pkgs.glib.bin}/bin/gio" set "$dest/CtyunClouddeskPublic.desktop" metadata::trusted true 2>/dev/null || true
+        ''}/bin/ctyunclouddesk-desktop-shortcut-${user}";
       };
     };
   }) cfg.desktopShortcutUsers);

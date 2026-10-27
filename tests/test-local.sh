@@ -23,7 +23,8 @@ exec > >(tee "$LOG") 2>&1
 
 echo "=== [1/4] nix build ==="
 nix build "$REPO" --json > "$RESULTS/build.json"
-PKG=$(grep -o '"/nix/store/[^"]*"' "$RESULTS/build.json" | head -1 | tr -d '"')
+PKG=$(grep -o '"/nix/store/[^"]*"' "$RESULTS/build.json" | tr -d '"' | grep -v '\.drv$' | head -1)
+[ -n "$PKG" ] || { echo "  FAIL: no store path found in build.json"; exit 1; }
 echo "package: $PKG"
 
 echo
@@ -32,21 +33,25 @@ echo "=== [2/4] ldd check of wrapped entry points ==="
 # Source everything except shebang+exec, then run ldd under that environment.
 check_libs() {
   local wrapper="$1" target="$2"
-  local envfile; envfile=$(mktemp)
+  local envfile ldout; envfile=$(mktemp); ldout=$(mktemp)
   # drop shebang (line 1) and the exec line (last line)
   sed '1d; $d' "$wrapper" > "$envfile"
   # shellcheck disable=SC1091
-  if ! (
-    source "$envfile"
-    ldd "$target"
-  ) | grep -E 'not found' > "$envfile.libs"; then
-    echo "  FAIL: unresolved libraries in $target:"
-    cat "$envfile.libs"
-    rm -f "$envfile" "$envfile.libs"
+  if ( source "$envfile"; ldd "$target" ) > "$ldout" 2>&1; then
+    if grep -qE 'not found' "$ldout"; then
+      echo "  FAIL: unresolved libraries in $target:"
+      grep -E 'not found' "$ldout"
+      rm -f "$envfile" "$ldout"
+      return 1
+    fi
+    echo "  OK: $target (all libraries resolve)"
+  else
+    echo "  FAIL: ldd failed for $target:"
+    cat "$ldout"
+    rm -f "$envfile" "$ldout"
     return 1
   fi
-  echo "  OK: $target (all libraries resolve)"
-  rm -f "$envfile" "$envfile.libs"
+  rm -f "$envfile" "$ldout"
 }
 
 APP="$PKG/opt/ctg/CtyunClouddeskPublic"
@@ -76,12 +81,20 @@ DISPLAY_NUM=$(ls /tmp/.X11-unix 2>/dev/null | head -1 | tr -d 'X')
 
 shot=""
 if command -v gnome-screenshot >/dev/null; then
-  shot="DISPLAY=:$DISPLAY_NUM gnome-screenshot -f $RESULTS/gui.png"
+  shot="DISPLAY=:$DISPLAY_NUM XAUTHORITY=\"$XAUTH\" gnome-screenshot -f $RESULTS/gui.png"
 fi
 
+# The vendor client is X11-only (bundles the xcb Qt platform plugin only), so
+# on a GNOME Wayland session it talks to the session's XWayland. Xlib needs
+# the session cookie: ~/.Xauthority if present, otherwise the mutter
+# XWayland auth file in the user runtime dir.
+XAUTH="/home/$SESSION_USER/.Xauthority"
+[ -f "$XAUTH" ] || XAUTH=$(ls -t "$RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null | head -1)
+[ -n "$XAUTH" ] || XAUTH="$RUNTIME_DIR/.mutter-Xwaylandauth."
 sudo -u "$SESSION_USER" env \
   XDG_RUNTIME_DIR="$RUNTIME_DIR" \
   DISPLAY=":${DISPLAY_NUM:-0}" \
+  XAUTHORITY="$XAUTH" \
   WAYLAND_DISPLAY=wayland-0 \
   QT_QPA_PLATFORM=xcb \
   bash -c "

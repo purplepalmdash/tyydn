@@ -23,7 +23,7 @@
 , pulseaudio
 , sqlite
 , libuuid
-, libudev0-shim
+, systemdMinimal # provides lib/libudev.so.1 (libudev0-shim only ships .so.0)
 , v4l-utils
 , libglvnd
 , mesa
@@ -43,6 +43,8 @@
 , gtk3          # the ark-update client tool is a GTK3 app
 , gdk-pixbuf
 , glibc_bin ? glibc.bin  # provides ldd for the self-check below
+, binutils                # readelf for the interpreter self-check
+, autoPatchelfHook        # repoint ELF interpreter + extend RPATH with store libs
 # ---- vendor deb ----
 # The deb is expected in the Nix store (add it with `nix store add <deb>`),
 # because Nix 2.3x sandboxes only expose a build's own input store paths.
@@ -50,6 +52,7 @@
 # the file as a real derivation input, so sandboxed builds can read it.
 , srcUrl ? "file:///nix/store/8a6ga3ky5jrzvnq4y5mqfjw0n96hm1n7-CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb"
 , srcHash ? "61840ae48b70133844327c400da6f25fab1bf7f477225fccb319ff14df19f18a"
+, pkgs ? (import <nixpkgs> { })  # callPackage passes this automatically
 }:
 
 # 天翼云电脑 (CTyun Cloud PC / "AI 云电脑") desktop client.
@@ -61,8 +64,10 @@
 #   2. preserve the vendor directory layout so relative lookups keep working
 #      (RPATH=$ORIGIN/lib, ../plugins, ../qml),
 #   3. re-point the .desktop Exec/Icon at absolute store paths,
-#   4. wrap the entry-point binaries so the handful of system libraries the
-#      bundle is missing are always resolvable.
+#   4. repoint the ELF interpreter and extend the RPATH (autoPatchelfHook)
+#      so the binaries run under NixOS' stub-less dynamic linker setup,
+#      and wrap the entry-point binaries so the handful of system libraries
+#      the bundle is missing are always resolvable.
 #
 # The vendor maintainer scripts (preinst/postinst/postrm) are NOT run; their
 # effects are reproduced declaratively by the NixOS module (see nixos/).
@@ -74,19 +79,37 @@
 # The vendored libs come first at runtime so they win over any system copy
 # (the bundle ships its own OpenSSL 1.1, ICU 55, ...).
 let
+  # Derivations whose /lib directories provide the system shared libraries
+  # the bundle needs. In nixpkgs >= 26.05 several of these packages split
+  # their outputs differently, so the *runtime* .so files may live in a
+  # specific output rather than the default one:
+  #   glib/fontconfig/xz/sqlite/libxslt: default output is the tools (bin)
+  #                                      output, .so files are in `out`
+  #   dbus/fontconfig: .so files are in the `lib` output
+  #   libstdc++/libgcc_s: the compiler's dedicated `lib` output
+  # Each entry is added to the package's nativeBuildInputs so auto-patch-elf
+  # can find the sonames there and extend the RUNPATH of every binary AND
+  # every vendored .so (transitive resolution) with the right directories.
+  runtimeLibs = [
+    glibc
+    alsa-lib dbus.lib libdrm expat
+    fontconfig.lib freetype glib.out libgudev xz.out
+    nss nspr libopus pixman pulseaudio sqlite.out
+    libuuid.lib systemdMinimal v4l-utils.lib
+    libglvnd mesa zlib
+    libx11 libxcb libxext libxfixes libxi libxrandr
+    libxrender libxscrnsaver libxcomposite libxcursor
+    libxdamage libxslt.out gtk3 gdk-pixbuf
+    gcc.cc.lib
+    # extra xcb libraries needed by the vendored Qt5 XCB platform plugin
+    # (top-level attrs are hyphenated in nixpkgs):
+    (pkgs."libxcb-wm")           # libxcb-icccm.so.4
+    (pkgs."libxcb-image")        # libxcb-image.so.0
+    (pkgs."libxcb-render-util")  # libxcb-render-util.so.0
+  ];
+
   sysLibs =
-    lib.concatStringsSep ":" (map (p: "${p}/lib") [
-      glibc
-      alsa-lib dbus libdrm expat
-      fontconfig freetype glib libgudev xz
-      nss nspr libopus pixman pulseaudio sqlite
-      libuuid.lib libudev0-shim v4l-utils.lib
-      libglvnd mesa zlib
-      libx11 libxcb libxext libxfixes libxi libxrandr
-      libxrender libxscrnsaver libxcomposite libxcursor
-      libxdamage libxslt gtk3 gdk-pixbuf
-    ]) 
-    + ":${gcc.cc.lib}/lib";
+    lib.concatStringsSep ":" (map (p: "${p}/lib") runtimeLibs);
 in
 stdenvNoCC.mkDerivation rec {
   pname = "ctyunclouddeskpublic";
@@ -97,7 +120,36 @@ stdenvNoCC.mkDerivation rec {
     sha256 = srcHash;
   };
 
-  nativeBuildInputs = [ dpkg makeWrapper glibc_bin ];
+  # runtimeLibs in nativeBuildInputs: their /lib directories become
+  # auto-patch-elf's soname search paths (the --libs argument), so both the
+  # entry-point executables and the vendored .so files (whose NEEDED lists
+  # reference the system libraries transitively) get the right directories
+  # appended to their RUNPATH.
+  nativeBuildInputs = [ dpkg makeWrapper glibc_bin binutils autoPatchelfHook ]
+    ++ runtimeLibs;
+
+  # For dynamic executables, auto-patch-elf additionally prepends all of
+  # these directories (each + /lib) to the RUNPATH up front, as a belt-and-
+  # braces measure next to the per-dependency resolution above.
+  runtimeDependencies = runtimeLibs;
+
+  # The bundle ships its own Qt5, OpenSSL, ICU, ...; only the system libs
+  # above are looked up, everything else resolves via the vendor RPATH
+  # ($ORIGIN/lib). Ignore (instead of failing on) sonames it cannot find.
+  autoPatchelfIgnoreMissingDeps = [ "*" ];
+
+  # Custom phase order: install (extract payload) -> fixup (auto-patch-elf
+  # repoints the ELF interpreter and extends the RPATH) -> check (verify
+  # everything, incl. a runtime smoke test, on the *final* binaries).
+  # The default order runs checkPhase before installPhase, when $out does
+  # not exist yet.
+  phases = [
+    "unpackPhase"
+    "patchPhase"
+    "installPhase"
+    "fixupPhase"
+    "checkPhase"
+  ];
 
   # Vendor payload is prebuilt; nothing to configure or compile.
   dontConfigure = true;
@@ -114,7 +166,8 @@ stdenvNoCC.mkDerivation rec {
 
     mkdir -p "$out/opt/ctg" \
              "$out/usr/bin" \
-             "$out/usr/share/applications"
+             "$out/usr/share/applications" \
+             "$out/share/applications"
 
     cp -a "$TMPDIR/payload/opt/ctg/CtyunClouddeskPublic" "$out/opt/ctg/"
     cp -a "$TMPDIR/payload/usr/bin/ark-update-CtyunClouddeskPublic" \
@@ -122,6 +175,10 @@ stdenvNoCC.mkDerivation rec {
           "$out/usr/bin/"
     cp -a "$TMPDIR/payload/usr/share/applications/CtyunClouddeskPublic.desktop" \
           "$out/usr/share/applications/"
+    # NixOS desktop-file discovery (via environment.systemPackages) looks in
+    # $out/share/applications, so keep a copy in the standard location too.
+    cp -a "$out/usr/share/applications/CtyunClouddeskPublic.desktop" \
+          "$out/share/applications/"
 
     # The vendor ships systemd units under lib/systemd/system; the NixOS
     # module defines equivalent units pointing at our wrappers, so drop the
@@ -136,6 +193,7 @@ stdenvNoCC.mkDerivation rec {
       -e "s|^Exec=.*|Exec=$out/bin/clouddesktop-qml|" \
       -e "s|^Icon=.*|Icon=$APP/resource/icon-public.png|" \
       "$out/usr/share/applications/CtyunClouddeskPublic.desktop" \
+      "$out/share/applications/CtyunClouddeskPublic.desktop" \
       "$APP/CtyunClouddeskPublic.desktop"
 
     # System libraries the bundle is missing (see docs/deb-analysis.md).
@@ -167,15 +225,24 @@ stdenvNoCC.mkDerivation rec {
   '';
 
   checkPhase = ''
-    # Verify that every entry point can resolve all of its shared libraries
-    # with the wrapper environment (bundled libs + system libs). This is the
-    # same thing the ldd check in tests/test-local.sh does, but at build time.
+    # Runs *after* installPhase and fixupPhase (see phases above), so $out is
+    # populated and auto-patch-elf has already repointed the ELF interpreter
+    # and extended the RPATH with the store library directories.
     export APP="$out/opt/ctg/CtyunClouddeskPublic"
     export LD_LIBRARY_PATH="$APP/lib:${sysLibs}"
+    export HOME="$TMPDIR"
+
+    # 1) every entry point must resolve all of its shared libraries
+    #    (bundled libs via RUNPATH=$ORIGIN/lib + store libs via the RPATH
+    #     auto-patch-elf added).
     ldd_check() {
       local target="$1"
+      if [ ! -e "$target" ]; then
+        echo "target missing: $target" >&2
+        exit 1
+      fi
       local missing
-      missing=$(ldd "$target" 2>&1 | grep "not found" || true)
+      missing=$(ldd "$target" 2>&1 | grep -E "not found|No such file" || true)
       if [ -n "$missing" ]; then
         echo "missing libraries for $target:"
         echo "$missing"
@@ -189,6 +256,39 @@ stdenvNoCC.mkDerivation rec {
     ldd_check "$APP/libexec/QtWebEngineProcess"
     ldd_check "$out/usr/bin/ark-update-CtyunClouddeskPublic"
     ldd_check "$out/usr/bin/ark-update-CtyunClouddeskPublicd"
+
+    # 2) the ELF interpreter must point at the store glibc dynamic loader,
+    #    not the generic /lib64/ld-linux-x86-64.so.2 (a stub ELF on NixOS
+    #    that exits 127).
+    interp=$(readelf -l "$APP/clouddesktop-qml" | sed -n 's/.*interpreter: \(.*\)\]$/\1/p')
+    case "$interp" in
+      /nix/store/*) echo "INTERP OK: $interp" ;;
+      *) echo "bad ELF interpreter: '$interp'" >&2; exit 1 ;;
+    esac
+
+    # 3) the RPATH must have been extended with store library directories.
+    runpath=$(readelf -d "$APP/clouddesktop-qml" | sed -n 's/.*Library runpath: \[\(.*\)\]$/\1/p')
+    case "$runpath" in
+      */nix/store/*) echo "RUNPATH OK: $runpath" ;;
+      *) echo "no store path in RUNPATH: '$runpath'" >&2; exit 1 ;;
+    esac
+
+    # 4) runtime smoke test: the shared daemon must actually start. It
+    #    needs its state directory (vendor unit: StateDirectory=
+    #    CtyunClouddeskPublic). Some build sandboxes have a read-only /
+    #    where /var cannot be created; skip gracefully there (the on-host
+    #    check in tests/test-local.sh still covers it).
+    if mkdir -p /var/lib/CtyunClouddeskPublic 2>/dev/null; then
+      timeout 10 "$APP/clouddesktop-daemon" -e > /dev/null 2>&1
+      rc=$?
+      if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
+        echo "clouddesktop-daemon smoke run failed with rc=$rc" >&2
+        exit 1
+      fi
+      echo "daemon smoke test OK (rc=$rc: 124 = ran until timeout)"
+    else
+      echo "note: /var not writable in this build sandbox; daemon smoke test skipped"
+    fi
   '';
 
   passthru = {
