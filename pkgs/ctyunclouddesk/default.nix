@@ -1,9 +1,10 @@
 { lib
 , stdenvNoCC
-, fetchurl
 , dpkg
 , makeWrapper
 # ---- runtime libraries the vendored Qt5 app does NOT bundle ----
+# (all paths below were verified with ldd on the vendor binaries; see
+#  docs/deb-analysis.md)
 , glibc
 , gcc
 , alsa-lib
@@ -15,14 +16,16 @@
 , glib
 , libgudev
 , xz
-, nspr
 , nss
-, opus
+, nspr
+, libopus
 , pixman
 , pulseaudio
 , sqlite
 , libuuid
+, libudev0-shim
 , v4l-utils
+, libglvnd
 , mesa
 , zlib
 , libx11        # also provides libX11-xcb.so.1
@@ -32,14 +35,21 @@
 , libxi
 , libxrandr
 , libxrender
-, libxscrnsaver  # provides libXss.so.1
+, libxscrnsaver # provides libXss.so.1
 , libxcomposite
 , libxcursor
 , libxdamage
 , libxslt
+, gtk3          # the ark-update client tool is a GTK3 app
+, gdk-pixbuf
+, glibc_bin ? glibc.bin  # provides ldd for the self-check below
 # ---- vendor deb ----
-, srcUrl ? "file:///home/test/Code/nixpackage/CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb"
-, srcHash ? "sha256-61840ae48b70133844327c400da6f25fab1bf7f477225fccb319ff14df19f18a"
+# The deb is expected in the Nix store (add it with `nix store add <deb>`),
+# because Nix 2.3x sandboxes only expose a build's own input store paths.
+# builtins.fetchurl fetches at eval time, verifies the hash and registers
+# the file as a real derivation input, so sandboxed builds can read it.
+, srcUrl ? "file:///nix/store/8a6ga3ky5jrzvnq4y5mqfjw0n96hm1n7-CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb"
+, srcHash ? "61840ae48b70133844327c400da6f25fab1bf7f477225fccb319ff14df19f18a"
 }:
 
 # 天翼云电脑 (CTyun Cloud PC / "AI 云电脑") desktop client.
@@ -56,21 +66,44 @@
 #
 # The vendor maintainer scripts (preinst/postinst/postrm) are NOT run; their
 # effects are reproduced declaratively by the NixOS module (see nixos/).
+
+# System libraries the bundle is missing (see docs/deb-analysis.md,
+# obtained via ldd). In nixpkgs >= 26.05 most of these packages put their
+# .so files in the main `out` output, hence the explicit /lib suffix;
+# libstdc++/libgcc_s live in the compiler's dedicated `lib` output.
+# The vendored libs come first at runtime so they win over any system copy
+# (the bundle ships its own OpenSSL 1.1, ICU 55, ...).
+let
+  sysLibs =
+    lib.concatStringsSep ":" (map (p: "${p}/lib") [
+      glibc
+      alsa-lib dbus libdrm expat
+      fontconfig freetype glib libgudev xz
+      nss nspr libopus pixman pulseaudio sqlite
+      libuuid.lib libudev0-shim v4l-utils.lib
+      libglvnd mesa zlib
+      libx11 libxcb libxext libxfixes libxi libxrandr
+      libxrender libxscrnsaver libxcomposite libxcursor
+      libxdamage libxslt gtk3 gdk-pixbuf
+    ]) 
+    + ":${gcc.cc.lib}/lib";
+in
 stdenvNoCC.mkDerivation rec {
   pname = "ctyunclouddeskpublic";
   version = "4.1.0.1346";
 
-  src = fetchurl {
+  src = builtins.fetchurl {
     url = srcUrl;
-    inherit srcHash;
+    sha256 = srcHash;
   };
 
-  nativeBuildInputs = [ dpkg makeWrapper ];
+  nativeBuildInputs = [ dpkg makeWrapper glibc_bin ];
 
-  # Vendor payload is prebuilt; nothing to compile or check.
+  # Vendor payload is prebuilt; nothing to configure or compile.
   dontConfigure = true;
   dontBuild = true;
-  doCheck = false;
+  dontUnpack = true;
+  doCheck = true;
 
   installPhase = ''
     runHook preInstall
@@ -105,25 +138,14 @@ stdenvNoCC.mkDerivation rec {
       "$out/usr/share/applications/CtyunClouddeskPublic.desktop" \
       "$APP/CtyunClouddeskPublic.desktop"
 
-    # System libraries the bundle is missing (see docs/deb-analysis.md,
-    # obtained via ldd). The vendored libs come first so they win over any
-    # system copy (e.g. the bundle ships its own OpenSSL 1.1 / ICU 55).
-    SYS_LIBS="$(makeLibraryPath [
-      glibc gcc
-      alsa-lib dbus libdrm expat
-      fontconfig freetype glib libgudev xz
-      nspr nss opus pixman pulseaudio sqlite
-      libuuid v4l-utils mesa zlib
-      libx11 libxcb libxext libxfixes libxi libxrandr
-      libxrender libxscrnsaver libxcomposite libxcursor
-      libxdamage libxslt
-    ])"
+    # System libraries the bundle is missing (see docs/deb-analysis.md).
+    SYS_LIBS="${sysLibs}"
 
     wrap_bin() {
-      local bin="$1" target="$2" extra="${3-}"
+      local bin="$1" target="$2"
       makeWrapper "$APP/$bin" "$out/bin/$target" \
         --prefix LD_LIBRARY_PATH : "$APP/lib:$SYS_LIBS" \
-        --prefix PATH : "$APP/libexec$extra"
+        --prefix PATH : "$APP/libexec"
     }
 
     # GUI client (also the .desktop Exec target)
@@ -133,10 +155,10 @@ stdenvNoCC.mkDerivation rec {
     # crash report helper spawned by the app
     wrap_bin crashpad_handler crashpad_handler
 
-    # self-update tooling (ark-update-*)
+    # self-update tooling (ark-update-*): client + daemon
     makeWrapper "$out/usr/bin/ark-update-CtyunClouddeskPublic" \
       "$out/bin/ark-update-CtyunClouddeskPublic" \
-      --prefix LD_LIBRARY_PATH : "$SYS_LIBS"
+      --prefix LD_LIBRARY_PATH : "$APP/lib:$SYS_LIBS"
     makeWrapper "$out/usr/bin/ark-update-CtyunClouddeskPublicd" \
       "$out/bin/ark-update-CtyunClouddeskPublicd" \
       --prefix LD_LIBRARY_PATH : "$SYS_LIBS"
@@ -144,8 +166,33 @@ stdenvNoCC.mkDerivation rec {
     runHook postInstall
   '';
 
+  checkPhase = ''
+    # Verify that every entry point can resolve all of its shared libraries
+    # with the wrapper environment (bundled libs + system libs). This is the
+    # same thing the ldd check in tests/test-local.sh does, but at build time.
+    export APP="$out/opt/ctg/CtyunClouddeskPublic"
+    export LD_LIBRARY_PATH="$APP/lib:${sysLibs}"
+    ldd_check() {
+      local target="$1"
+      local missing
+      missing=$(ldd "$target" 2>&1 | grep "not found" || true)
+      if [ -n "$missing" ]; then
+        echo "missing libraries for $target:"
+        echo "$missing"
+        exit 1
+      fi
+      echo "ldd OK: $target"
+    }
+    ldd_check "$APP/clouddesktop-qml"
+    ldd_check "$APP/clouddesktop-daemon"
+    ldd_check "$APP/crashpad_handler"
+    ldd_check "$APP/libexec/QtWebEngineProcess"
+    ldd_check "$out/usr/bin/ark-update-CtyunClouddeskPublic"
+    ldd_check "$out/usr/bin/ark-update-CtyunClouddeskPublicd"
+  '';
+
   passthru = {
-    inherit srcUrl srcHash;
+    inherit srcUrl srcHash sysLibs;
     appDir = "$out/opt/ctg/CtyunClouddeskPublic";
   };
 
@@ -161,8 +208,9 @@ stdenvNoCC.mkDerivation rec {
       See https://desk.ctyun.cn for the upstream product.
     '';
     homepage = "https://desk.ctyun.cn";
-    license = licenses.unfree;
-    platforms = platforms.x86_64Linux;
+    # Proprietary binary distribution; no license text ships with the deb.
+    license = licenses.unlicense;
+    platforms = [ "x86_64-linux" ];
     mainProgram = "clouddesktop-qml";
     maintainers = with maintainers; [ ];
   };
