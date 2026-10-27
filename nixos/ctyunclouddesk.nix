@@ -147,8 +147,7 @@ in
           RemainAfterExit = true;
           ExecStart = "${pkgs.bash}/bin/bash -c 'set -e; mkdir -p /home/${user}/.config/autostart; install -m 755 ${desktopFile} /home/${user}/.config/autostart/CtyunClouddeskPublic.desktop'";
         };
-      }
-    ) // (lib.mapAttrs' (lib.genAttrs cfg.desktopShortcutUsers) (user: _: nameValuePair "ctyunclouddesk-desktop-shortcut-${user}" {
+      })) // (lib.mapAttrs' (lib.genAttrs cfg.desktopShortcutUsers) (user: _: nameValuePair "ctyunclouddesk-desktop-shortcut-${user}" {
         description = "Install 天翼云电脑 desktop shortcut for user ${user}";
         after = [ "users.target" ];
         wantedBy = [ "multi-user.target" ];
@@ -166,8 +165,7 @@ in
             "${pkgs.gnome.gio}/bin/gio" set "$dest/CtyunClouddeskPublic.desktop" metadata::trusted true 2>/dev/null || true
           '';
         };
-      }
-    );
+      }));
 
     # Vendor USB permission rule (postinst set_usb_permission):
     #   SUBSYSTEM=="usb", MODE="0666", GROUP="dialout"
@@ -180,8 +178,7 @@ in
 
     users.users = (lib.mapAttrs' (lib.genAttrs cfg.usbPermission.users) (user: _: nameValuePair user {
         extraGroups = mkMerge [ [ "dialout" ] ];
-      }
-    );
+      }));
 
     assertions = [
       {
