@@ -173,7 +173,8 @@ in
 
     # Vendor USB permission rule (postinst set_usb_permission):
     #   SUBSYSTEM=="usb", MODE="0666", GROUP="dialout"
-    hardware.udev.extraRules = lib.optionals cfg.usbPermission.enable [
+    # (option moved from hardware.udev to services.udev in nixpkgs >= 26.05)
+    services.udev.extraRules = lib.optionals cfg.usbPermission.enable [
       ''
         SUBSYSTEM=="usb", MODE="0666", GROUP="dialout"
       ''
