@@ -130,9 +130,8 @@ in
     };
 
     usbPermission = mkOption {
-      type = types.submodule (
-        {
-          enable = mkOption {
+      type = types.submodule ({ ... }: {
+        enable = mkOption {
             type = types.bool;
             default = true;
             description = ''
@@ -141,13 +140,12 @@ in
               This is what the vendor postinst writes to /etc/udev/rules.d.
             '';
           };
-          users = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-            description = "User accounts to add to the dialout group.";
-          };
-        }
-      );
+        users = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = "User accounts to add to the dialout group.";
+        };
+      });
       default = { enable = true; users = [ ]; };
       description = "USB redirection permission settings (vendor udev rule + dialout group).";
     };
