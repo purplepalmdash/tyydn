@@ -154,7 +154,8 @@ in
   config = mkIf cfg.enable {
 
     # /opt/ctg/..., /usr/bin/ark-update-*, /usr/share/applications/...
-    system.path = [ cfg.package ];
+    # (environment.pathsToLink builds /run/current-system/sw from these paths)
+    environment.pathsToLink = [ cfg.package ];
 
     # Shared state dir between daemon and clients (vendor: mkdir 1777).
     systemd.tmpfiles.rules = [
