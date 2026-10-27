@@ -15,6 +15,9 @@ GNOME Wayland 自动登录(用户 `test`)。
 - [x] 挂进 /etc/nixos 并 `nixos-rebuild switch` 成功
 - [x] 本机实测:守护进程、自更新进程、GUI 客户端、桌面项/自启动/udev 全部生效
 - [x] tests/test-local.sh 全绿(2026-10-27 03:03,日志 tests/results/)
+- [x] **Xorg (X11) + Xfce 会话**:官方模块 `services.xserver.desktopManager.xfce`
+      + XDG_CONFIG_DIRS 补丁,自动登录进 Xfce;客户端在原生 X11 上 GUI 验证通过
+      (截图 tests/results/xorg-*.png)
 
 ## 关键问题与解决(时间线)
 
@@ -58,6 +61,47 @@ GNOME Wayland 自动登录(用户 `test`)。
    - GUI 冒烟:客户端纯 X11(xcb),root/跨会话跑需 X 认证 →
      自动探测 `~/.Xauthority` 或 `$XDG_RUNTIME_DIR/.mutter-Xwaylandauth.*`。
 
+## Xorg + Xfce 会话(2026-10-27 下午,续)
+
+目标:在原生 X11(Xorg)上运行纯 X11 的 CTyun 客户端。
+
+1. **选 Xfce 而非 GNOME-on-Xorg**:gnome-session 50.1 只提供 wayland-sessions,
+   GNOME 上 Xorg 需要自建会话文件;Xfce 是纯 X11 桌面且自带 xsessions 条目。
+2. **第一次手动方案(sessionPackages + 自建 xfce.desktop)**:Xorg 能起、
+   `loginctl Type=x11`、`xfce4-session` 进程在,但无窗口管理器/面板/桌面,
+   首登弹 “未能载入安全会话”(zh_CN 翻译,英文 "Unable to load a failsafe session")。
+3. **根因排查(读上游源码)**:
+   - xfsm-manager.c:`xfsm_manager_load_failsafe()` 从 xfconf channel
+     "xfce4-session" 读 `/general/FailsafeSessionName`(="Failsafe")与
+     `/sessions/Failsafe/Client*_Command`(xfwm4/xfsettingsd/xfce4-panel/
+     Thunar --daemon/xfdesktop);读不到就弹该对话框。
+   - xfconf 的 perchannel-xml 后端:channel 文件路径 =
+     `xfce4/xfconf/xfce-perchannel-xml/<channel>.xml`,通过 libxfce4util 的
+     `xfce_resource_lookup_all(XFCE_RESOURCE_CONFIG, ...)` 查找,
+     搜索目录 = XDG_CONFIG_HOME + **XDG_CONFIG_DIRS 逐条** + SYSCONFDIR/xdg(/etc/xdg),
+     拼接方式是 `dir + "/xfce4/xfconf/..."`(无 /xdg 变体)。
+   - NixOS 包把该 XML 放在 `$PKG/etc/xdg/...` → XDG_CONFIG_DIRS 必须含
+     `$PKG/etc/xdg`(第一次写成 `$PKG/etc`,少一层 xdg,所以仍失败)。
+   - xfconfd 不是 failsafe 会话的 client,靠 D-Bus 激活(org.xfce.Xfconf,
+     服务文件在 `share/dbus-1/services/`);只有 xfconf 包在 systemPackages 里
+     用户 bus 才找得到该服务文件。
+4. **修法(官方模块 + 一个补丁)**:
+   - `services.xserver.desktopManager.xfce.enable = true`
+     (26.05 模块在 nixos/modules/services/x11/desktop-managers/xfce.nix;
+     旧式 `desktopManager.session` attrset 经 bridge 生成 xsessions/xfce.desktop
+     并汇入 `services.displayManager.sessionPackages`,GDM 正常识别)。
+     它同时启用 programs.xfconf/programs.dconf/xdg-desktop-portal 等。
+   - 补 `environment.sessionVariables.XDG_CONFIG_DIRS = map (p: "${p}/etc/xdg") ...`
+     (nixpkgs 的 xfce 模块没有这一步——本机已用 xfconf-query 实证:
+     带上 etc/xdg 后 channel 可读,不带则不可)。
+5. **验证**:
+   - `nixos-rebuild switch` 后重启 display-manager:Xorg + xfwm4 + panel +
+     xfdesktop + Thunar + xfsettingsd + notifyd + screensaver 全部起来;
+     `~/.config/xfce4/` 正常写入。
+   - 客户端 `DISPLAY=:0 ... clouddesktop-qml` 登录界面完整渲染(见截图);
+     厂商日志:llvmpipe 软渲染被检测到 → 自动软件渲染;QR 扫码接口轮询正常。
+   - 桌面快捷方式(天翼云电脑)在 Xfce 桌面上可见。
+
 ## 验证证据(2026-10-27)
 
 - `nix build` checkPhase:`ldd OK × 6`、`INTERP OK`(store glibc)、`RUNPATH OK`
@@ -74,6 +118,12 @@ GNOME Wayland 自动登录(用户 `test`)。
 - udev 规则生效(`/etc/udev/rules.d/99-local.rules`),`test ∈ dialout`
 - `tests/test-local.sh`:All local checks passed
   (tests/results/test-local-20261027-030315.log + gui.png)
+- **Xorg/Xfce(2026-10-27 04:5x)**:
+  - Xorg (modesetting) 运行于 tty2,`loginctl` `Type=x11`
+  - Xfce 组件全起(xfwm4/panel/xfdesktop/Thunar/xfsettingsd/xfconfd/notifyd)
+  - 客户端窗口 1024x768 完整渲染登录界面(QR + 账号登录),
+    截图 tests/results/xorg-xfce-desktop.png / xorg-ctyun-client.png
+  - 厂商日志:checkOpenGLContext → llvmpipe → "ArkCore Use software renderType"
 
 ## 后续(可选)
 
@@ -90,7 +140,9 @@ GNOME Wayland 自动登录(用户 `test`)。
 | `flake.nix` / `shell.nix` | flake 包/模块/示例系统/devShell;非 flake shell |
 | `tests/test-local.sh` | 本机冒烟测试(全绿,日志在 tests/results/) |
 | `tests/nixos-vm.nix` | NixOS VM 测试(可选跑) |
-| `README.md` | 使用/配置/技术要点 |
+| `README.md` | 使用/配置/技术要点/Xorg+Xfce 环境 |
 | `docs/deb-analysis.md` | 厂商 deb 分析 |
 | `docs/architecture.md` | 架构与踩坑说明 |
 | `docs/progress.md` | 本进度记录 |
+| `tests/results/xorg-xfce-desktop.png` | Xorg+Xfce 桌面截图(含天翼云电脑快捷方式) |
+| `tests/results/xorg-ctyun-client.png` | 客户端 X11 登录界面截图 |
