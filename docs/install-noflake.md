@@ -180,8 +180,12 @@ ls -lh *.deb
 ## 第 3 步：把 .deb 放进 Nix store
 
 ```sh
-nix store add CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb
+nix --extra-experimental-features "nix-command" store add CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb
 ```
+
+整行复制（命令很长）。开头的 `--extra-experimental-features "nix-command"` 不能省：
+全新非 flake 26.05 默认没开 `nix-command` 这个 Nix 特性，少了它会报
+`error: experimental Nix feature 'nix-command' is disabled`。
 
 **应该看到**（开头 16 位必须是 `8a6ga3ky5jrzvnq4y5mq`）：
 
@@ -195,15 +199,16 @@ nix store add CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.
 
 ```sh
 cd ~/tyydn
-nix build
+nix --extra-experimental-features "nix-command flakes" build
 ```
 
+- 开头 `--extra-experimental-features "nix-command flakes"` 不能省（原因同上：
+  全新非 flake 26.05 默认两个特性都没开；这条命令两个都要——`nix build` 本身
+  要 `nix-command`，在当前目录里把仓库当 flake 构建还要 `flakes`）。
 - 第一次下载依赖 + 给 ~170MB 程序打 ELF 补丁，约 5–15 分钟。
 - 成功 = 当前目录出现 `result` 链接、没有 `error`。
 - 想看构建自检输出（ldd/解释器/RUNPATH/守护进程冒烟测试全 OK）：
-  `nix log .#packages.x86_64-linux.ctyunclouddeskpublic | tail -20`
-- 报 `flakes are disabled` → 先 `export NIX_EXPERIMENTAL_FEATURES="flakes nix-command"` 再跑。
-  （Nix 2.34 默认已开，一般不用。）
+  `nix --extra-experimental-features "nix-command flakes" log .#packages.x86_64-linux.ctyunclouddeskpublic | tail -20`
 
 这步失败现在报错，比第 6 步整系统重建时报错好排查。跳过也可以。
 
