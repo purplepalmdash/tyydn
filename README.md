@@ -25,6 +25,7 @@
 │   ├── test-local.sh          # 本机冒烟测试(build/ldd/服务/GUI 存活)
 │   └── nixos-vm.nix           # NixOS VM 测试
 └── docs/
+    ├── install.md             # 小白安装指南:全新 NixOS 26.05 从零装起 tyydn
     ├── deb-analysis.md        # 厂商 deb 分析(目录布局/单元脚本/依赖/运行时行为)
     ├── architecture.md        # 本方案架构说明
     ├── progress.md            # 进度记录(含踩坑清单)
