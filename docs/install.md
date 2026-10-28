@@ -336,6 +336,10 @@ sudo reboot
 
 ## 附录 D：你的系统没有 /etc/nixos/flake.nix（老系统 / 非 flake 安装）
 
+> **刚装好的新系统、连图形界面/zsh 都还没配？** → 直接用 `docs/install-noflake.md`，
+> 那是从 0 开始的小白指南（非 flake 版）：GDM + GNOME + Xfce、zsh、
+> 开机自动登录 / sudo 免密，一步步到客户端跑起来。
+
 第 0–4 步照做（第 1 步重建用 `sudo nixos-rebuild switch --no-flake`）。
 第 5 步跳过，第 6 步改为：
 
