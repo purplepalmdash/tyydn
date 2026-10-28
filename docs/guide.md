@@ -5,6 +5,8 @@
 
 > 已在 NixOS 26.05(x86-64)上实测。24.11 / 25.05 理论相同,命令一样。
 > 仓库地址下面用 `OWNER/ctyunclouddesk-nix` 占位,发布后替换成实际地址。
+> 客户端本体(约 168 MB 的 .deb)不在 git 仓库里,需要从厂商官网下载,
+> 放在哪、怎么入库见第 2 步的 **2.0 节**。
 
 ---
 
@@ -17,6 +19,8 @@
   - `ark-update-*`——厂商自带的新版检查服务(不想让它自动检查新版可关,见第 8 节)。
 - 客户端是 **X11 程序**。在默认的 GNOME Wayland 桌面上它通过 XWayland
   照常运行(已实测);想要原生 X11 桌面请看第 7 节(可选)。
+- **客户端本体**是厂商的 .deb 安装包(约 168 MB),不在 git 仓库里(太大,
+  已被 `.gitignore` 忽略)。第 2 步的 2.0 节会告诉你从哪下、放哪、怎么入库。
 
 ---
 
@@ -45,6 +49,40 @@ whoami
 ---
 
 ## 第 2 步:安装
+
+### 2.0 先把厂商 deb 放进 Nix store(A、B 两种方法都要,约 1 分钟)
+
+客户端本体不在仓库里,需要你下载一次并放进 Nix store,之后构建才能找到它:
+
+1. 从厂商官网 <https://desk.ctyun.cn> 下载 x86-64 版 .deb 安装包。
+   **文件名保留厂商原名,不要改名**(文件名参与 store 路径计算):
+
+   ```
+   CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb
+   ```
+
+   (对应本仓库支持的客户端 4.1.0.1346。)
+
+2. **放到本仓库的根目录**(和 `flake.nix` 同级的目录):
+   - B 方法:`/opt/src/ctyunclouddesk-nix/`(即 2.1 克隆出来的目录);
+   - A 方法:本地没有克隆,放你顺手的目录即可,例如 `~/Downloads/`。
+
+3. 用**普通用户**(不要用 sudo)执行,把文件放进 Nix store:
+
+   ```sh
+   nix store add /完整路径/CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb
+   ```
+
+   输出应该是:
+
+   ```
+   /nix/store/8a6ga3ky5jrzvnq4y5mqfjw0n96hm1n7-CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb
+   ```
+
+   相同文件名 + 相同内容,store 路径是固定的,正好和仓库里写死的 `srcUrl`
+   一致,**不用改仓库里的任何文件**。若下的是新版 deb、路径对不上,见第 9 节。
+
+4. 入库成功后,磁盘上那个 .deb 可以删掉(store 里有副本了,仓库也不用再管它)。
 
 ### A 方法:flake 系统(推荐,大多数人)
 
@@ -233,10 +271,12 @@ sudo nixos-rebuild switch --flake .#nixos
 厂商发布新客户端时:
 
 ```sh
-# 1) 下载新 deb(厂商官网 desk.ctyun.cn)
-# 2) 放入 nix store 并记下路径
-nix store add ./CtyunClouddeskPublic-xxx.deb
-# 3) 更新包里的 srcUrl / srcHash / version(见 README "技术要点" / docs/progress.md)
+# 1) 从厂商官网 desk.ctyun.cn 下载新版 deb,放到本仓库根目录
+#    (和 flake.nix 同级,保留厂商原文件名)
+# 2) 放入 nix store,记下输出的 store 路径
+nix store add /仓库根目录/CtyunClouddeskPublic-xxx.deb
+# 3) 更新包里的 srcUrl(上一步的 store 路径)/ srcHash / version
+#    (见 README "技术要点" / docs/progress.md)
 #    —— 若仓库已按 release asset 方式发布,直接用新版仓库 tag 即可:
 sudo nix flake update ctyunclouddesk
 # 4) 重建

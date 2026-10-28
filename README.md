@@ -34,15 +34,20 @@
 
 ### 1. 把厂商 deb 放进 Nix store
 
-Nix 2.3x 的沙箱构建只能看到构建输入,因此 deb 先入库:
+客户端本体是厂商的 .deb(约 168 MB),**不提交进 git**(`.gitignore` 忽略
+`*.deb`)。Nix 2.3x 的沙箱构建只能看到构建输入,因此 deb 先入库:
 
 ```bash
+# 从厂商官网 https://desk.ctyun.cn 下载,放到仓库根目录,保留厂商原名:
 nix store add CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb
-# 记下输出的 /nix/store/<hash>-CtyunClouddeskPublic-....deb,
-# 更新 pkgs/ctyunclouddesk/default.nix 顶部的 srcUrl / srcHash
+# 输出 /nix/store/8a6ga3ky5jrzvnq4y5mqfjw0n96hm1n7-...deb
+# 相同文件名 + 相同内容 ⇒ store 路径固定,与 pkgs/ctyunclouddesk/default.nix
+# 里默认的 srcUrl 一致,无需改代码。
 ```
 
-(当前默认值已指向本机 store 中的 4.1.0.1346 版本。)
+换了新版 deb(文件名/内容不同)后 store 路径会变,需更新
+`pkgs/ctyunclouddesk/default.nix` 顶部的 `srcUrl` / `srcHash`。
+(当前默认值指向 4.1.0.1346,build 204010003-1346;详见 `docs/guide.md` 2.0 节。)
 
 ### 2. 构建包
 
