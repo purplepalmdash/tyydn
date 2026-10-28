@@ -210,3 +210,4 @@ GNOME Wayland 自动登录(用户 `test`)。
 | `tests/results/xorg-xfce-desktop.png` | Xorg+Xfce 桌面截图(含天翼云电脑快捷方式) |
 | `tests/results/xorg-ctyun-client.png` | 客户端 X11 登录界面截图 |
 | `tests/results/xorg-ctyun-windowed.png` | 客户端窗口模式(Alt+F11 退出全屏后) |
+| `images/2026_10_28_16_41_20_1021x768.jpg` | 2026-10-28 本机 Xfce (Xorg) 桌面:天翼云电脑桌面快捷方式 + `cat /etc/issue` 确认 NixOS 26.05 |

@@ -147,7 +147,7 @@ services.ctyunclouddesk = {
 客户端是纯 X11/xcb 应用。本机原本是 GNOME Wayland;为在**原生 X11** 上
 验证/使用,配置了 Xorg + Xfce(2026-10-27 已在本机 `nixos-rebuild switch`
 验证通过,截图见 `tests/results/xorg-xfce-desktop.png`、
-`tests/results/xorg-ctyun.png`)。
+`tests/results/xorg-ctyun-client.png`)。
 
 ### 配置(在 `/etc/nixos/configuration.nix`)
 
@@ -225,6 +225,12 @@ autostart 条目,会话启动时跑一个幂等的小脚本把 `/xfwm4/default/*
   软渲染后自动切到软件渲染(`ArkCore Use software renderType`),运行正常。
 - 单实例行为符合预期:第二个实例通过 IPC 通知首个实例后自行退出
   ("[ark] Another App is running, so I will exit")。
+- 2026-10-28 本机 Xfce (Xorg) 桌面实拍(NixOS 26.05.12658.1f607aa79b63):
+  桌面上的"天翼云电脑"图标是模块 `desktopShortcutUsers` 装的 .desktop
+  快捷方式(悬停可见名称/类型/大小/修改时间),终端里 `cat /etc/issue`
+  确认系统版本为 NixOS 26.05:
+
+  ![NixOS 26.05 上的 Xfce 桌面(天翼云电脑快捷方式)](images/2026_10_28_16_41_20_1021x768.jpg)
 
 ## 客户端全屏与快捷键问题(2026-10-27 排查)
 
