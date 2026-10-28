@@ -7,9 +7,6 @@ result-*
 tests/results/
 !tests/results/.gitkeep
 
-# large binary artifacts
-*.deb
-
 # editor noise
 .*.swp
 .DS_Store

@@ -16,6 +16,7 @@
 .
 ├── flake.nix                  # flake:package / nixosModule / example 系统 / devShell
 ├── shell.nix                  # 非 flake 开发 shell
+├── CtyunClouddeskPublic-*.deb # 厂商原版 .deb(约 168 MB,本分支已包含)
 ├── pkgs/ctyunclouddesk/
 │   └── default.nix            # 包定义:解包 deb、auto-patch-elf、makeWrapper、自检
 ├── nixos/
@@ -34,11 +35,13 @@
 
 ### 1. 把厂商 deb 放进 Nix store
 
-客户端本体是厂商的 .deb(约 168 MB),**不提交进 git**(`.gitignore` 忽略
-`*.deb`)。Nix 2.3x 的沙箱构建只能看到构建输入,因此 deb 先入库:
+客户端本体是厂商的 .deb(约 168 MB),**本分支已包含**:就在仓库根目录、
+保留厂商原名,clone 下来即齐。(想要不含 .deb 的轻量仓库、自己下载的话,
+用 `manualdownload` 分支。)Nix 2.3x 的沙箱构建只能看到构建输入,因此先把
+仓库根目录的 .deb 入库:
 
 ```bash
-# 从厂商官网 https://desk.ctyun.cn 下载,放到仓库根目录,保留厂商原名:
+# .deb 已在仓库根目录(与 flake.nix 同级),无需下载:
 nix store add CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb
 # 输出 /nix/store/8a6ga3ky5jrzvnq4y5mqfjw0n96hm1n7-...deb
 # 相同文件名 + 相同内容 ⇒ store 路径固定,与 pkgs/ctyunclouddesk/default.nix
