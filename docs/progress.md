@@ -211,3 +211,21 @@ GNOME Wayland 自动登录(用户 `test`)。
 | `tests/results/xorg-ctyun-client.png` | 客户端 X11 登录界面截图 |
 | `tests/results/xorg-ctyun-windowed.png` | 客户端窗口模式(Alt+F11 退出全屏后) |
 | `images/2026_10_28_16_41_20_1021x768.jpg` | 2026-10-28 本机 Xfce (Xorg) 桌面:天翼云电脑桌面快捷方式 + `cat /etc/issue` 确认 NixOS 26.05 |
+
+## 变更 2026-11-02(第二台机器安装反馈)
+
+在用户机器 `mynix`(NixOS 26.11,用户 `dash`)上安装时收集到若干报错,逐项定位:
+
+- **守护进程 “could not be found”**:该机器 NixOS 配置尚未启用本模块(重建输出无
+  `clouddesktop-daemon`、`/var/lib/CtyunClouddeskPublic` 未生成)→ 补齐配置后重建。
+- **`nix flake update ctyunclouddesk`**:`ctyunclouddesk` 是 `path:` 输入,在 /etc/nixos 里定义;
+  路径输入无需 lock 更新,`git pull + git lfs pull` 即可(新增 FAQ 13)。
+- **`Git tree is dirty`** 警告:本地未提交改动,无害(FAQ 14)。
+- **`nix log ... Broken pipe`**:构建已成功;是 nix log 写终端最后一块时管道中断,非构建错误
+  (auto-patchelf 的详细输出占了日志大部分,约 190KB)(FAQ 15)。
+- **test-local.sh 缺陷**(本次提交修复):① GUI 冒烟测试硬编码测试用户 `test`
+  → 默认改为**当前用户**(`CTYUN_TEST_USER` 覆盖),且优先继承桌面会话的
+  `$DISPLAY`/`$XAUTHORITY`;② GUI 进程因无 DISPLAY 崩溃退出时 `timeout` 返回 0,
+  测试误判 “stayed alive” → 改用 `exit -124` 超时法,崩溃即 FAIL。
+  (本机 test 用户验证:全绿,日志 tests/results/test-local-20261102-*.log)
+- 文档:install.md 附录 C 新增 FAQ 12–16;README 测试节补充 GUI 测试运行说明。

@@ -334,6 +334,56 @@ sudo reboot
     本包针对 nixpkgs 26.05 的库布局打包。25.11 及以下建议先升级系统
     （`sudo nixos-rebuild switch` + `nix flake update`），或找维护者出对应版本。
 
+12. **`systemctl status clouddesktop-daemon` 报 `Unit clouddesktop-daemon.service could not be found`**
+    这些服务只有在 NixOS 配置**真正启用了模块**后才会生成。按顺序检查：
+    ```sh
+    ls -ld /var/lib/CtyunClouddeskPublic     # 目录存在（权限 1777）= 模块已生效
+    grep -n ctyunclouddesk /etc/nixos/flake.nix /etc/nixos/configuration.nix
+    ```
+    - `grep` 一无所获 → 第 5 步（flake.nix 加输入）或第 6 步（import 模块 +
+      `services.ctyunclouddesk` 块）漏了/没保存。补齐后 `sudo nixos-rebuild switch`。
+    - 配置都在但目录不存在 → 上次重建发生在改动之前。重跑 `sudo nixos-rebuild switch`，
+      并看输出：首次启用时 “the following new units were started” 里应有
+      `clouddesktop-daemon.service`（没有 = 模块仍没进配置）。
+      已启用过的重建不会重复列已有服务，直接 `systemctl status` 即可。
+
+13. **`nix flake update ctyunclouddesk` 报 `'ctyunclouddesk' does not match any input of this flake`**
+    `ctyunclouddesk` 这个输入定义在 `/etc/nixos/flake.nix`（第 5 步加的），不在 tyydn 仓库里——
+    要在 `/etc/nixos` 目录下运行这条命令。
+    而且这个输入是 `path:` 本地目录，**本来就不需要** `nix flake update`：
+    `cd ~/tyydn && git pull && git lfs pull` 之后，下次 `nixos-rebuild` 自动用上新代码（见附录 E）。
+    `nix flake update` 主要用来更新 lock 文件里的 URL 输入（如 `nixpkgs`）。
+
+14. **`warning: Git tree '...' is dirty`**
+    无害警告：git 仓库里有未提交的本地改动（比如你在 `~/tyydn` 里编辑过文件没提交）。
+    Nix 按当前工作区内容构建，构建结果不受影响。想让它不提示：
+    `cd ~/tyydn && git add -A && git commit -m "local changes"`（或 `git stash`）。
+    小提示：最新版 `tests/test-local.sh` 默认测试**当前用户**，不用再改脚本里的用户名
+    （老版本用 `CTYUN_TEST_USER=$(whoami) bash tests/test-local.sh`）。
+
+15. **`nix log` 输出被截断，末尾是 `error: write of N bytes: Broken pipe`**
+    构建本身**已经成功**（包已生成，后面的构建/测试会复用同一个 `result`）：
+    这条错误是 `nix log` 自己往终端写日志的最后一块时管道断了
+    （比如中途按了 Ctrl+C、终端转发中断），**不是构建内部的错误**。
+    日志中间那大段 `{ ... 'libs': [...] ... }` 字典是 auto-patchelf（ELF 补丁工具）的
+    详细输出，全日志约 190KB，看着吓人但正常。想看完整结尾（最后几行应为 4 条
+    `ldd OK:`、`INTERP OK`、`RUNPATH OK`，末行 `note: /var not writable ...`）：
+    ```sh
+    nix log .#packages.x86_64-linux.ctyunclouddeskpublic | tail -10
+    ```
+
+16. **跑 `tests/test-local.sh` 时 GUI 报 `could not connect to display :0` / `no Qt platform plugin could be initialized`**
+    客户端是纯 X11 应用，GUI 冒烟测试必须在**你的桌面会话里**运行：
+    - 在**桌面会话里开的终端**中直接 `bash tests/test-local.sh`（最新版脚本会优先
+      继承当前会话的 `$DISPLAY` / `$XAUTHORITY`，不用改任何东西）。
+    - 客户端是单实例：如果你已经开着客户端窗口，测试实例会提示 “Another App is running”
+      后退出，测试报 `OK: single-instance client` —— 正常，不算失败。
+    - 最简单的目测：在会话终端里跑 `./result/bin/clouddesktop-qml`，
+      弹出登录界面就说明 X11 连接正常。
+    - 会话是 GNOME (Wayland) 的话，客户端走 XWayland，需要会话的 X 认证 cookie
+      （`$XAUTHORITY` 指向 `/run/user/<uid>/.mutter-Xwaylandauth.*`），
+      所以别在 TTY（无图形界面）里跑这一步。
+
 ## 附录 D：你的系统没有 /etc/nixos/flake.nix（老系统 / 非 flake 安装）
 
 > **刚装好的新系统、连图形界面/zsh 都还没配？** → 直接用 `docs/install-noflake.md`，

@@ -7,15 +7,19 @@
 # Steps:
 #   1. build the package from the flake
 #   2. verify no shared library is unresolved for the wrapped entry points
-#   3. verify the daemon system service is active (after nixos-rebuild)
-#   4. launch the GUI inside the current GNOME/Wayland session and confirm it
-#      keeps running, then take a screenshot as evidence
+#   3. verify the daemon system service exists and is active (after nixos-rebuild)
+#   4. launch the GUI inside the current desktop session (X11, or Wayland via
+#      XWayland) and confirm it keeps running, then take a screenshot as evidence
+#
+# Step 4 works best when run from a terminal INSIDE the desktop session:
+# $DISPLAY / $XAUTHORITY are inherited and used as-is. If the graphical
+# session belongs to a different user than the one running this script:
+#   CTYUN_TEST_USER=<that user> bash tests/test-local.sh
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO=$(pwd)
-DEB="CtyunClouddeskPublic-x86-64-20260812062844-Release-204010003-1346.deb"
 RESULTS="$REPO/tests/results"
 mkdir -p "$RESULTS"
 LOG="$RESULTS/test-local-$(date +%Y%m%d-%H%M%S).log"
@@ -23,7 +27,7 @@ exec > >(tee "$LOG") 2>&1
 
 echo "=== [1/4] nix build ==="
 nix build "$REPO" --json > "$RESULTS/build.json"
-PKG=$(grep -o '"/nix/store/[^"]*"' "$RESULTS/build.json" | tr -d '"' | grep -v '\.drv$' | head -1)
+PKG=$(grep -o '"/nix/store/[^"]*"' "$RESULTS/build.json" 2>/dev/null | tr -d '"' | grep -v '\.drv$' | head -1 || true)
 [ -n "$PKG" ] || { echo "  FAIL: no store path found in build.json"; exit 1; }
 echo "package: $PKG"
 
@@ -64,52 +68,115 @@ echo
 echo "=== [3/4] daemon service (requires: nixos-rebuild already applied) ==="
 if systemctl is-active --quiet clouddesktop-daemon; then
   echo "  OK: clouddesktop-daemon is active"
+elif awk 'NR>1 {print $1}' <(systemctl list-unit-files 2>/dev/null) | grep -qx 'clouddesktop-daemon.service'; then
+  echo "  WARN: clouddesktop-daemon unit exists but is not active"
+  echo "        (journalctl -u clouddesktop-daemon -n 20)"
 else
-  echo "  WARN: clouddesktop-daemon is not active (run 'sudo nixos-rebuild switch --flake /etc/nixos' first)"
-  systemctl --user status 2>/dev/null || true
+  echo "  WARN: clouddesktop-daemon unit is MISSING — is the NixOS module enabled?"
+  echo "        (services.ctyunclouddesk.enable = true — docs/install.md steps 5-6,"
+  echo "         then 'sudo nixos-rebuild switch')"
 fi
-test -d /var/lib/CtyunClouddeskPublic && echo "  OK: /var/lib/CtyunClouddeskPublic exists (mode $(stat -c %a /var/lib/CtyunClouddeskPublic))"
+if test -d /var/lib/CtyunClouddeskPublic; then
+  echo "  OK: /var/lib/CtyunClouddeskPublic exists (mode $(stat -c %a /var/lib/CtyunClouddeskPublic))"
+fi
 
 echo
 echo "=== [4/4] GUI smoke test in the current desktop session ==="
-# user that owns the graphical session (default: test)
-SESSION_USER="${CTYUN_TEST_USER:-test}"
-USER_UID=$(id -u "$SESSION_USER")
+# The user that owns the graphical session. Default: whoever runs this test —
+# step 4 is meant to run from that session's own terminal.
+SESSION_USER="${CTYUN_TEST_USER:-$(id -un)}"
+if ! USER_UID=$(id -u "$SESSION_USER" 2>/dev/null); then
+  echo "  FAIL: user '$SESSION_USER' does not exist"
+  echo "        (set CTYUN_TEST_USER=<user of the graphical session>)"
+  exit 1
+fi
 RUNTIME_DIR="/run/user/$USER_UID"
-DISPLAY_NUM=$(ls /tmp/.X11-unix 2>/dev/null | head -1 | tr -d 'X')
-: "${DISPLAY_NUM:=0}"
-
-shot=""
-if command -v gnome-screenshot >/dev/null; then
-  shot="DISPLAY=:$DISPLAY_NUM XAUTHORITY=\"$XAUTH\" gnome-screenshot -f $RESULTS/gui.png"
+if [ ! -d "$RUNTIME_DIR" ]; then
+  echo "  FAIL: $RUNTIME_DIR does not exist — is $SESSION_USER's session running?"
+  echo "        (step 4 needs a live desktop session; run it from that session's terminal)"
+  exit 1
 fi
 
-# The vendor client is X11-only (bundles the xcb Qt platform plugin only), so
-# on a GNOME Wayland session it talks to the session's XWayland. Xlib needs
-# the session cookie: ~/.Xauthority if present, otherwise the mutter
-# XWayland auth file in the user runtime dir.
-XAUTH="/home/$SESSION_USER/.Xauthority"
-[ -f "$XAUTH" ] || XAUTH=$(ls -t "$RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null | head -1)
-[ -n "$XAUTH" ] || XAUTH="$RUNTIME_DIR/.mutter-Xwaylandauth."
-sudo -u "$SESSION_USER" env \
-  XDG_RUNTIME_DIR="$RUNTIME_DIR" \
-  DISPLAY=":${DISPLAY_NUM:-0}" \
-  XAUTHORITY="$XAUTH" \
-  WAYLAND_DISPLAY=wayland-0 \
-  QT_QPA_PLATFORM=xcb \
-  bash -c "
-    set -u
-    start=\$(date +%s)
-    timeout --signal=KILL 25 '$PKG'/bin/clouddesktop-qml 2> '$RESULTS/gui.log' || true
-    end=\$(date +%s)
-    ran=\$((end - start))
-    echo \"  GUI ran for \${ran}s (expected ~25s if it stayed alive)\"
-    test \"\$ran\" -ge 20
-    if grep -q 'error while loading shared libraries' '$RESULTS/gui.log'; then
-      echo '  FAIL: missing shared libraries'; cat '$RESULTS/gui.log'; exit 1
+# X11 display + auth cookie. The vendor client only ships the xcb Qt platform
+# plugin, so on a GNOME Wayland session it talks to the session's XWayland,
+# which needs the session's auth cookie. Prefer the inherited session
+# environment ($DISPLAY / $XAUTHORITY — this script is meant to run from the
+# session's own terminal); fall back to detection:
+#   display : /tmp/.X11-unix or the default :0
+#   cookie  : ~/.Xauthority, else the mutter XWayland auth file in the
+#             user runtime dir.
+TEST_DISPLAY="${DISPLAY:-}"
+if [ -z "$TEST_DISPLAY" ]; then
+  DISPLAY_NUM=""
+  if [ -d /tmp/.X11-unix ]; then
+    DISPLAY_NUM=$(ls /tmp/.X11-unix | head -1 | tr -d 'X' || true)
+  fi
+  # modern distros keep the X socket under $XDG_RUNTIME_DIR instead
+  if [ -z "$DISPLAY_NUM" ] && [ -n "${XDG_RUNTIME_DIR:-}" ] \
+     && [ -d "$XDG_RUNTIME_DIR/.X11-unix" ]; then
+    DISPLAY_NUM=$(ls "$XDG_RUNTIME_DIR/.X11-unix" | head -1 | tr -d 'X' || true)
+  fi
+  : "${DISPLAY_NUM:=0}"
+  TEST_DISPLAY=":$DISPLAY_NUM"
+fi
+TEST_XAUTH="${XAUTHORITY:-}"
+if [ -z "$TEST_XAUTH" ] || [ ! -r "$TEST_XAUTH" ]; then
+  TEST_XAUTH="/home/$SESSION_USER/.Xauthority"
+  if [ ! -f "$TEST_XAUTH" ]; then
+    TEST_XAUTH=$(ls -t "$RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null | head -1 || true)
+  fi
+fi
+echo "  display: $TEST_DISPLAY   xauth: ${TEST_XAUTH:-<inherited>}"
+
+# Run the GUI as the session user (no-op when already that user).
+RUNAS=()
+if [ "$(id -un)" != "$SESSION_USER" ]; then
+  RUNAS=( sudo -u "$SESSION_USER" )
+fi
+ENVARGS=( XDG_RUNTIME_DIR="$RUNTIME_DIR" DISPLAY="$TEST_DISPLAY" QT_QPA_PLATFORM=xcb )
+if [ -n "$TEST_XAUTH" ]; then
+  ENVARGS+=( XAUTHORITY="$TEST_XAUTH" )
+fi
+
+GUI_LOG="$RESULTS/gui.log"
+"${RUNAS[@]}" env "${ENVARGS[@]}" bash -c '
+  set -u
+  start=$(date +%s)
+  # ArkLog writes most lines to STDOUT (Qt errors go to stderr), so capture
+  # both: the single-instance marker below is only visible on stdout.
+  timeout --signal=KILL 25 "$1"/bin/clouddesktop-qml > "$2" 2>&1 || true
+  end=$(date +%s)
+  ran=$((end - start))
+  echo "  GUI ran for ${ran}s (expected ~25s if it stayed alive)"
+  if grep -qE "error while loading shared libraries|no Qt platform plugin could be initialized" "$2"; then
+    echo "  FAIL: GUI failed to start — log:"
+    cat "$2"
+    exit 1
+  fi
+  if [ "$ran" -lt 20 ]; then
+    # The vendor client is single-instance: a second launch shows
+    # "Another App is running" and exits — that is a healthy system, not a
+    # broken build.
+    if grep -qiE "another app is running|another instance|already running" "$2"; then
+      echo "  OK: single-instance client — another instance is already running"
+      exit 0
     fi
-    ${shot:-true}
-  "
+    echo "  FAIL: GUI exited early — log tail:"
+    tail -n 5 "$2"
+    exit 1
+  fi
+' _ "$PKG" "$GUI_LOG"
 echo "  OK: GUI stayed alive"
+
+# Screenshot as evidence (non-fatal).
+if command -v gnome-screenshot >/dev/null; then
+  if DISPLAY="$TEST_DISPLAY" XAUTHORITY="${TEST_XAUTH:-}" \
+     gnome-screenshot -f "$RESULTS/gui.png" 2>/dev/null; then
+    echo "  screenshot: $RESULTS/gui.png"
+  else
+    echo "  (screenshot failed — non-fatal)"
+  fi
+fi
+
 echo
 echo "All local checks passed. Log: $LOG"

@@ -138,6 +138,12 @@ services.ctyunclouddesk = {
 ## 测试
 
 - `tests/test-local.sh`:build → 各入口 ldd → 守护进程服务状态 → GUI 存活 25s(带截图)
+  - GUI 冒烟测试须在**桌面会话里的终端**运行(客户端是纯 X11 应用);脚本优先继承
+    当前会话的 `$DISPLAY` / `$XAUTHORITY`,测试用户默认当前用户
+    (`CTYUN_TEST_USER=<user>` 可覆盖,如用专用 `test` 用户)
+  - 客户端是单实例:已开着客户端窗口时,测试实例报 "Another App is running" 后退出,
+    测试判为 `OK: single-instance client`(正常)
+  - 客户端进程只写 `/tmp`、`/home`(日志/缓存/配置),不写 `/var`
 - `tests/nixos-vm.nix`:NixOS VM 集成测试(`nix build .#checks.x86_64-linux.ctyunclouddesk-vm`)
 - 构建期自检(`checkPhase`):6 个入口 `ldd` 无 not found、`INTERP` 指向 store glibc、
   `RUNPATH` 含 store 库目录、守护进程可启动(沙箱可写 /var 时)
