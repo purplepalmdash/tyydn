@@ -179,7 +179,11 @@ command -v clouddesktop-qml
 
 - 桌面上有 **"天翼云电脑"图标** → 双击;
 - 应用菜单(开始菜单)里搜 **"天翼云电脑"** → 点开;
-- 终端里输入 `clouddesktop-qml` 回车。
+- 终端里输入 `clouddesktop-qml` 回车;
+- 开发者(在仓库目录里跑过 `nix build`、还没 `nixos-rebuild` 就想试新包):
+  `cd 仓库目录 && ./start.sh`——仓库自带的一键脚本,后台拉起刚构建的包
+  (等效 `./result/bin/clouddesktop-qml &`;纯 TTY/SSH 终端里也会自动补好
+  X11 环境变量,无需自己 export)。
 
 出现登录窗口后:
 - **扫码登录**:用天翼云 APP / 翼支付 / 微信扫码(最省事);
@@ -197,7 +201,7 @@ command -v clouddesktop-qml
 | 想干什么 | 怎么做 |
 | --- | --- |
 | 退出客户端 | 窗口右上角的电源/关闭按钮,或终端 `pkill -u $USER -f 'clouddesktop[-]qml'` |
-| 启动客户端 | 桌面图标 / 菜单 / `clouddesktop-qml` |
+| 启动客户端 | 桌面图标 / 菜单 / `clouddesktop-qml` / 仓库内 `./start.sh` |
 | 看后台服务状态 | `systemctl status clouddesktop-daemon` |
 | 看客户端日志 | 客户端自己会在 `~/.local/share/CtyunClouddeskPublic/Log/` 写日志 |
 | 看服务日志 | `journalctl -u clouddesktop-daemon -n 50 --no-pager` |

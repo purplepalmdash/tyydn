@@ -16,6 +16,7 @@
 .
 ├── flake.nix                  # flake:package / nixosModule / example 系统 / devShell
 ├── shell.nix                  # 非 flake 开发 shell
+├── start.sh                   # 命令行一键拉起客户端(见"使用"第 5 节)
 ├── CtyunClouddeskPublic-*.deb # 厂商原版 .deb(约 168 MB,本分支已包含)
 ├── pkgs/ctyunclouddesk/
 │   └── default.nix            # 包定义:解包 deb、auto-patch-elf、makeWrapper、自检
@@ -81,6 +82,31 @@ bash tests/test-local.sh
 systemctl status clouddesktop-daemon
 systemctl status ark-update-CtyunClouddeskPublic
 ```
+
+### 5. 命令行启动客户端(可选)
+
+平时双击桌面快捷方式即可。想从命令行拉起(例如 `nix build` 出新包、还没
+`nixos-rebuild` 就想手动试),在仓库根目录:
+
+```bash
+./start.sh                     # 一键脚本:后台拉起,纯 TTY/SSH 终端会自动补 X11 环境
+# 等价于:
+./result/bin/clouddesktop-qml &
+```
+
+装进系统后(第 3 步)也可以用 PATH 里的命令:`clouddesktop-qml &`(任意目录)。
+
+注意点:
+
+- **前提**:`clouddesktop-daemon` 在运行(`systemctl status clouddesktop-daemon`)。
+- `result` 是 `nix build` 生成的符号链接(已被 .gitignore 忽略),只在构建过
+  的仓库目录里有效;`clouddesktop-qml` 则是系统安装后全局可用。
+- 客户端是纯 X11 应用:桌面会话内的终端 `DISPLAY` 已设好,直接跑;纯 TTY/SSH
+  终端需先补 `export DISPLAY=:0` 和 XAUTHORITY(Xorg+GDM:
+  `/run/user/<uid>/gdm/Xauthority`;GNOME Wayland:
+  `$XDG_RUNTIME_DIR/.mutter-Xwaylandauth.*`)——`start.sh` 已代劳。
+- 单实例:客户端已开着时,新实例提示 "Another App is running" 后自行退出(正常)。
+- 默认全屏;`Alt+F11` 切窗口模式(原理见下文"客户端全屏与快捷键问题"一节)。
 
 ## 模块选项 (`services.ctyunclouddesk`)
 
